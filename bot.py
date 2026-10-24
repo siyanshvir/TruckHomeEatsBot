@@ -13,6 +13,7 @@ from history import warm_start
 from forecast_log import append_unique
 from mechanics import features
 from politics import choose_vote, vote_analysis
+from final_mode import attach_policy
 
 ROOT = Path(__file__).resolve().parent
 
@@ -68,9 +69,11 @@ def make_brain(model=None, samples=32, small_crowds=True):
     learner = Learner.load(path) if path.exists() else Learner()
     # Inventory still pays full ingredient/waste costs in expected profit; ease
     # only the additional downside penalty to permit supported demand growth.
-    return Brain(learner=learner, samples=samples, small_crowds=small_crowds,
-                 risk=.08 if small_crowds else .15,
-                 spot_price_lift={'thompson': 1.39})
+    brain = Brain(learner=learner, samples=samples, small_crowds=small_crowds,
+                  risk=.08 if small_crowds else .15,
+                  spot_price_lift={'thompson': 1.39})
+    attach_policy(brain)  # learns from every day; steers only in the final (see Runner.apply_profile)
+    return brain
 
 
 def fallback(state):
@@ -103,6 +106,8 @@ class Runner:
         self.voted = set()
         self.staffed = set()
         self.reported = set()
+        self.force_final = False
+        self.live_checkpoint = checkpoint
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
@@ -180,6 +185,37 @@ class Runner:
                                        actual_result=last.get('you'), actual_spots=last.get('spots')))
                 except OSError:
                     print('Evaluation log write failed', flush=True)
+
+    def profile_wanted(self, state):
+        """'final' in final markets (or when forced for practice); 'baseline' otherwise or when killed."""
+        if os.environ.get('NIGHTSHIFT_PROFILE') == 'baseline':
+            return 'baseline'
+        try:
+            if json.loads((ROOT / 'data' / 'profile.json').read_text()).get('profile') == 'baseline':
+                return 'baseline'
+        except (OSError, ValueError, AttributeError):
+            pass
+        return 'final' if (state.get('mode') == 'final' or self.force_final) else 'baseline'
+
+    def apply_profile(self, state):
+        policy = getattr(self.brain, 'final_policy', None)
+        if policy is None or not hasattr(self.brain, 'use_final'):
+            return
+        want = self.profile_wanted(state) == 'final'
+        if want != getattr(self.brain, 'final_active', False):
+            self.brain.use_final(want)
+            print('Profile: %s' % ('FINAL (adaptive)' if want else 'baseline'), flush=True)
+        if want and state.get('mode') == 'final' and self.live_checkpoint:
+            self.checkpoint = Path(self.live_checkpoint).parent / 'final-runtime-v1.json'  # never the live file
+
+    def final_extras(self, state, order):
+        policy = getattr(self.brain, 'final_policy', None)
+        if policy is None or not getattr(self.brain, 'final_active', False):
+            return {}
+        try:
+            return policy.order_extras(state, order)
+        except Exception:
+            return {}
 
     def vote_report(self, state):
         """Say how the campaign looks for our order. Read-only; it never casts or changes a vote."""
@@ -267,6 +303,7 @@ class Runner:
                     state, next_state = next_state, None
                 version = state['version']
                 backoff = .25
+                self.apply_profile(state)
                 if state.get('phase') == 'over' and state.get('mode') == 'practice':
                     self.brain.observe(state)
                     self.record_evaluation(state)
@@ -299,7 +336,11 @@ class Runner:
                         order = fallback(state)
                     self.pending_key, self.pending_order = key, order
                     self.pending_features = active_features
-                order = self.pending_order
+                order = dict(self.pending_order, **self.final_extras(state, self.pending_order))
+                policy = getattr(self.brain, 'final_policy', None)
+                if getattr(self.brain, 'final_active', False) and policy.is_wrecked(state):
+                    self.blocked = key  # wrecked in a riot: orders would get 403
+                    continue
                 # Submission precedes logging/checkpoint disk I/O in the two-second window.
                 status, response = self.client.call('POST', base + '/orders', order, timeout=1.)
                 if status == 200:
@@ -353,6 +394,8 @@ def main():
     parser.add_argument('--samples', type=int, default=32)
     parser.add_argument('--model', type=Path)
     parser.add_argument('--fresh', action='store_true', help='Ignore live checkpoint')
+    parser.add_argument('--profile', choices=('auto', 'final', 'baseline'), default='auto',
+                        help='final: use the adaptive policy even in practice; auto: final markets only')
     args = parser.parse_args()
     if args.predict and args.practice:
         parser.error('--predict is for a read-only live forecast; omit --practice')
@@ -367,9 +410,12 @@ def main():
         if status not in (200, 201):
             raise RuntimeError('Practice creation failed (HTTP %s)' % status)
         base = response['base']
+    if args.profile == 'baseline':
+        os.environ['NIGHTSHIFT_PROFILE'] = 'baseline'
     runner = Runner(client, brain, checkpoint,
                     ROOT / 'data' / ('practice-v1.jsonl' if args.practice else 'decisions-v1.jsonl'),
                     resume=not args.fresh)
+    runner.force_final = args.profile == 'final'
     if not args.practice:
         loaded = warm_start(runner.brain, ROOT)
         print('Loaded %d additional saved live days' % loaded, flush=True)

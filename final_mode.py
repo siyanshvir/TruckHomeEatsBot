@@ -41,7 +41,7 @@ class FinalPolicy:
         self.controller = None
         if MetaController is not None:
             try:
-                self.controller = MetaController(data.get('controller') or {'priors': priors.get('controller')}, seed=seed)
+                self.controller = MetaController(data.get('controller'), seed=seed, priors=priors.get('controller'))
             except Exception:
                 self.controller = None
         self.knobs = dict(MIDDLE)
@@ -68,7 +68,8 @@ class FinalPolicy:
     def to_dict(self):
         parts = {'calibration': self.calibrator, 'competition': self.competition,
                  'controller': self.controller, 'rules': self.adapter}
-        out = {name: self._guard(name, part.to_dict, None) for name, part in parts.items() if part is not None}
+        out = {name: self._guard(name, lambda part=part: part.to_dict(), None)
+               for name, part in parts.items() if part is not None}
         return dict(out, knobs=self.knobs, knob_day=self.knob_day)
 
     def restore(self, data):
@@ -83,25 +84,26 @@ class FinalPolicy:
 
     def new_market(self):
         for part in (self.competition, self.controller):
-            if part is not None and hasattr(part, 'new_market'):
-                self._guard('new_market', part.new_market, None)
+            if part is not None:
+                self._guard('new_market', lambda part=part: part.new_market(), None)
 
     # --- before the order -------------------------------------------------
     def begin(self, brain, state):
         """Pick tonight's knobs and apply risk and scenario count to the planner."""
-        knobs = dict(MIDDLE)
-        if self.controller is not None:
-            chosen = self._guard('choose', lambda: self.controller.choose(self._context(state)), None)
-            if chosen is not None:
-                knobs = {name: float(getattr(chosen, name)) for name in MIDDLE}
-        self.knobs, self.knob_day = knobs, state.get('order_for_day')
         streak = 0
         for check in reversed(brain.prediction_checks):
             if (check.get('actual_profit') or 0) < 0:
                 streak += 1
             else:
                 break
-        brain.risk = knobs['risk'] * (1 + .25 * min(streak, 4))  # caution after consecutive losing days
+        knobs = dict(MIDDLE)
+        if self.controller is not None:
+            context = dict(self._context(state), losing_streak=streak)  # the controller leans cautious on streaks
+            chosen = self._guard('choose', lambda: self.controller.choose(context), None)
+            if chosen is not None:
+                knobs = {name: float(getattr(chosen, name)) for name in MIDDLE}
+        self.knobs, self.knob_day = knobs, state.get('order_for_day')
+        brain.risk = knobs['risk']
         elapsed = (brain.diagnostics or {}).get('elapsed')
         low, high = SAMPLE_RANGE
         if elapsed:
@@ -172,7 +174,7 @@ class FinalPolicy:
     def report(self):
         out = {'knobs': self.knobs, 'errors': dict(self.errors)}
         if self.calibrator is not None:
-            out['calibration'] = self._guard('report', self.calibrator.report, {})
+            out['calibration'] = self._guard('report', lambda: self.calibrator.report(), {})
         return out
 
 

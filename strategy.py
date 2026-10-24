@@ -51,6 +51,12 @@ class Brain:
         self.forecast_record = None
         self.scenario_rivals = []
 
+    def _final_state(self):
+        try:
+            return self.final_policy.to_dict() if self.final_policy else None
+        except Exception:
+            return None  # the policy must never break checkpointing
+
     def use_final(self, active):
         """Switch between the baseline policy and the adaptive final policy."""
         active = bool(active and self.final_policy is not None)
@@ -68,7 +74,7 @@ class Brain:
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
                 'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom,
-                'final': self.final_policy.to_dict() if self.final_policy else None}
+                'final': self._final_state()}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
