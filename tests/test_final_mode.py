@@ -224,3 +224,34 @@ class FinalStartResetTests(unittest.TestCase):
         tail = dict(state, politics={'laws': [{'key': 'tailgate', 'params': {'game_crowd': {'other': .9}, 'riot': 1.5}}]})
         self.assertEqual(RuleAdapter().spot_cost(crack, 'highst', include_residual=False), 0)
         self.assertGreater(RuleAdapter().spot_cost(tail, 'highst', include_residual=False), base)
+
+
+class MaturityTests(unittest.TestCase):
+    def test_maturity_follows_the_best_reputation(self):
+        from posture import maturity
+        self.assertEqual(maturity({'you': {'reputation': dict.fromkeys(('oval', 'thompson'), 50.)}}), 0.)
+        self.assertAlmostEqual(maturity({'you': {'reputation': {'oval': 67.5, 'thompson': 50.}}}), .5)
+        self.assertEqual(maturity({'you': {'reputation': {'oval': 100.}}}), 1.)
+        self.assertEqual(maturity({}), 1.)   # unknown reputation never blocks
+
+    def test_roaming_bonus_waits_for_a_home_spot_but_costs_do_not(self):
+        policy = FinalPolicy()
+        class Compete:
+            value = -30.
+            def scaled(self, spot, state, breadth): return self.value
+        policy.competition, policy.adapter = Compete(), None
+        young = {'you': {'reputation': dict.fromkeys(('oval', 'thompson'), 50.)}}
+        old = {'you': {'reputation': {'oval': 90., 'thompson': 50.}}}
+        self.assertEqual(policy.score_adjust(young, 'thompson'), 0.)       # no bonus at reputation 50
+        self.assertEqual(policy.score_adjust(old, 'thompson'), -30.)       # full bonus once established
+        Compete.value = 20.
+        self.assertEqual(policy.score_adjust(young, 'thompson'), 20.)      # a cost always applies
+
+    def test_posture_aggression_scales_with_maturity(self):
+        from posture import read
+        hist = {d: {'me': 100. * d, 'r': 400. * d} for d in range(1, 9)}
+        young = read({'day': 8, 'days': 30, 'mode': 'live', 'you': {'reputation': {'a': 50.}}}, hist, 'me')
+        old = read({'day': 8, 'days': 30, 'mode': 'live', 'you': {'reputation': {'a': 95.}}}, hist, 'me')
+        self.assertEqual(young['upside'], 0.)
+        self.assertGreater(old['upside'], 0.)
+        self.assertGreater(young['risk_scale'], old['risk_scale'])

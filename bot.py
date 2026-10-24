@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+import traceback
 import urllib.error
 import urllib.request
 from game import Rules, SPOTS, without_null_counts
@@ -365,7 +366,9 @@ class Runner:
                     try:
                         order = self.brain.decide(state)
                     except Exception as error:
-                        print('Policy error (%s); using bounded fallback' % type(error).__name__, flush=True)
+                        where = traceback.extract_tb(error.__traceback__)[-1]
+                        print('Policy error (%s: %s at %s:%d); using bounded fallback' %
+                              (type(error).__name__, str(error)[:70], Path(where.filename).name, where.lineno), flush=True)
                         order = fallback(state)
                     self.pending_key, self.pending_order = key, order
                     self.pending_features = active_features

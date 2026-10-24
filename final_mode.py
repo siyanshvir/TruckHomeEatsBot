@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import time
 from game import reputation_value, VALUES
+from posture import maturity
 
 try:
     from calibration import Calibrator
@@ -152,7 +153,10 @@ class FinalPolicy:
         """Dollars per day to subtract from a spot's score (negative is a bonus)."""
         total = 0.
         if self.competition is not None:
-            total += self._guard('competition', lambda: float(self.competition.scaled(spot, state, self.knobs['breadth'])), 0.)
+            def competition():
+                penalty = float(self.competition.scaled(spot, state, self.knobs['breadth']))
+                return penalty * maturity(state) if penalty < 0 else penalty   # roaming bonuses wait for a home spot
+            total += self._guard('competition', competition, 0.)
         if self.adapter is not None:
             total += self._guard('spot_cost', lambda: float(self.adapter.spot_cost(state, spot, include_residual=False)), 0.)
         return max(-80., min(80., total))

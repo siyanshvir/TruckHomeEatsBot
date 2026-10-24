@@ -15,6 +15,19 @@ FLOOR = 60.           # dollars/day: scale below which gaps are noise
 MAX_UPSIDE = .5       # weight on E[max(0, profit - mean)] at full pressure
 MAX_EXPLORE = 40.     # dollars of bonus for a quiet, rarely used spot at full pressure
 NEUTRAL = {'pressure': 0., 'lead': 0., 'risk_scale': 1., 'upside': 0., 'explore': 0.}
+RAMP = 35.            # reputation points above the starting 50 at which a market counts as established
+
+
+def maturity(state):
+    """0 right after a reset (reputation 50 everywhere), 1 once a home spot is established (85+).
+
+    Reputation compounds about 5 points a day at the spot we keep selling at, so early in a market the
+    right move is to stay and build it; roaming and upside-seeking only pay once a home exists."""
+    try:
+        reps = [float(v) for v in ((state.get('you') or {}).get('reputation') or {}).values()]
+        return max(0., min(1., (max(reps) - 50.) / RAMP)) if reps else 1.   # unknown: do not hold aggression back
+    except (TypeError, ValueError):
+        return 1.
 
 
 def _rates(history, day):
@@ -80,10 +93,11 @@ def read(state, history, me):
             needed = rates.get(leader, 0.) + (cash[leader] - cash[me]) / left
             pressure = max(pressure, trust * max(0., min(1., (needed - ours) / max(needed, FLOOR))))
     lead = trust * max(0., min(1., (ours - best) / scale))
+    grown = maturity(state)   # aggression waits until a home spot is established
     return {'pressure': pressure, 'lead': lead,
-            'risk_scale': max(.4, 1. - .6 * pressure + .5 * lead),
-            'upside': MAX_UPSIDE * pressure,
-            'explore': MAX_EXPLORE * pressure * (1. - lead)}
+            'risk_scale': max(.4, 1. - .6 * pressure * grown + .5 * lead),
+            'upside': MAX_UPSIDE * pressure * grown,
+            'explore': MAX_EXPLORE * pressure * (1. - lead) * grown}
 
 
 def note_cash(history, state):
