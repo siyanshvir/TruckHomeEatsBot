@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 from game import reputation_value, VALUES
 from posture import maturity
+from complaints import Complaints
 
 try:
     from calibration import Calibrator
@@ -49,6 +50,7 @@ class FinalPolicy:
         self.knob_day = None
         self.profit_mean = data.get('profit_mean')
         self.final_started = bool(data.get('final_started'))
+        self.complaints = Complaints(data.get('complaints'))
         self.seed, self.priors = seed, priors
         self.errors = {}
 
@@ -74,7 +76,8 @@ class FinalPolicy:
                  'controller': self.controller, 'rules': self.adapter}
         out = {name: self._guard(name, lambda part=part: part.to_dict(), None)
                for name, part in parts.items() if part is not None}
-        return dict(out, knobs=self.knobs, knob_day=self.knob_day, profit_mean=self.profit_mean, final_started=self.final_started)
+        return dict(out, knobs=self.knobs, knob_day=self.knob_day, profit_mean=self.profit_mean, final_started=self.final_started,
+                    complaints=self.complaints.to_dict())
 
     def restore(self, data):
         for key, cls, attr in (('calibration', Calibrator, 'calibrator'), ('competition', Competition, 'competition'),
@@ -87,6 +90,7 @@ class FinalPolicy:
         self.knob_day = data.get('knob_day')
         self.profit_mean = data.get('profit_mean')
         self.final_started = bool(data.get('final_started'))
+        self.complaints = Complaints(data.get('complaints'))
 
     def reset_for_final(self):
         """First final state: the tuner, competition and unexplained-profit residuals were learned under
@@ -165,6 +169,13 @@ class FinalPolicy:
         if self.adapter is None:
             return {}
         return self._guard('extras', lambda: dict(self.adapter.order_extras(state, order) or {}), {})
+
+    def complaint_decision(self, state, brain, order):
+        """Whether to file a health complaint tonight (see complaints.py); never raises."""
+        recent = [c.get('actual_profit') for c in brain.prediction_checks[-7:] if c.get('actual_profit') is not None]
+        daily = sum(recent) / len(recent) if recent else float((brain.diagnostics.get('chosen') or {}).get('profit') or 0.)
+        return self._guard('complaints', lambda: self.complaints.analyse(state, brain, order, daily),
+                           {'file': False, 'reason': 'error'})
 
     def is_wrecked(self, state):
         return bool(self.adapter is not None and self._guard('wrecked', lambda: self.adapter.is_wrecked(state), False))

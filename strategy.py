@@ -50,6 +50,7 @@ class Brain:
         self.opponents = OpponentModel()
         self.crew = CrewModel()
         self.cash_history = {}   # day -> {truck id: cash}, for recent daily earnings of every truck
+        self._rep_hit, self.last_overlap = {}, {}
         self.posture, self._home = dict(posture_mod.NEUTRAL), set()
         self.phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
         self.surprises = {'days': 0, 'fire': 0, 'give': 0}  # counted from last_day.moments
@@ -346,7 +347,7 @@ class Brain:
                     meals = min(rules.capacity(q), int(rec['meals']) if rec else 80)
                 price = round(clamp(price, rules.price_min, rules.price_max), 2)
                 rep = self.reputations.get(name, {}).get(spot, 50.)
-                rep = clamp(rep + rng.gauss(0, 5 if hist else 12), 0, 100)
+                rep = clamp(rep + rng.gauss(0, 5 if hist else 12), 0, 100) * self._rep_hit.get(name, 1.)
                 placements[spot].append((price, q, rep, meals))
                 named.append({'id': name, 'spot': spot, 'price': price,
                               'quality': q, 'reputation': rep, 'meals': meals})
@@ -383,7 +384,7 @@ class Brain:
             self.scenario_rivals.append(named)
         return scenarios
 
-    def evaluate(self, state, rules, spot, quality, price, scenarios):
+    def evaluate(self, state, rules, spot, quality, price, scenarios, fixed_meals=None):
         rep = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
         cost = rules.costs[quality]
         cap = rules.capacity(quality)
@@ -409,7 +410,7 @@ class Brain:
         n = len(distributions)
         quiet = sum(1 for placement, _, _, _ in scenarios if not placement[spot]) / max(1, n)
         # Every feasible integer inventory is considered, including zero.
-        for meals in range(cap + 1):
+        for meals in (range(cap + 1) if fixed_meals is None else [min(int(fixed_meals), cap)]):
             contribution = min(1., meals * cost / 250.)
             left = 0 if contribution <= .5 else 1
             fraction = contribution * 2 if left == 0 else (contribution - .5) * 2
@@ -464,6 +465,29 @@ class Brain:
         cap = self.low_price_caps[quality] * self.spot_price_lift.get(spot, 1.) if self.small_crowds else rules.price_max
         return min(rules.price_max, self.price_cap or rules.price_max, cap,
                    reputation_value(quality, rep, rules.values))
+
+    def order_value(self, state, order, hit=None):
+        """Expected result of this exact order under the usual scenarios (same seed as decide), with the
+        reputations of some rivals scaled by `hit` ({truck id: factor}). Also records, in last_overlap,
+        how often each rival shares the order's spot."""
+        state = without_null_counts(state)
+        if state.get('order_for_day') is None:
+            state = dict(state, order_for_day=(state.get('forecast') or {}).get('day') or int(state.get('day', 0)) + 1)
+        rules = Rules.read(state)
+        counts = self.forecast(state, rules)
+        digest = hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'))).encode()).digest()
+        self._rep_hit = dict(hit or {})
+        try:
+            scenarios = self.scenarios(state, rules, counts, random.Random(int.from_bytes(digest[:8], 'big')))
+        finally:
+            self._rep_hit = {}
+        spot = order['spot']
+        seen = {}
+        for named in self.scenario_rivals:
+            for rival in {r['id'] for r in named if r.get('spot') == spot}:
+                seen[rival] = seen.get(rival, 0) + 1
+        self.last_overlap = {rival: count / max(1, len(self.scenario_rivals)) for rival, count in seen.items()}
+        return self.evaluate(state, rules, spot, order['quality'], order['price'], scenarios, fixed_meals=order['meals'])
 
     def location_restriction(self, results, counts, spots):
         if not self.small_crowds:

@@ -15,6 +15,7 @@ from forecast_log import append_unique
 from mechanics import features
 from politics import choose_vote, vote_analysis
 from final_mode import attach_policy
+from complaints import enabled as complaints_enabled, ENDPOINT as COMPLAINT_PATH
 
 ROOT = Path(__file__).resolve().parent
 
@@ -106,6 +107,7 @@ class Runner:
         self.pending_features = None
         self.voted = set()
         self.staffed = set()
+        self.complained = set()
         self.reported = set()
         self.force_final = False
         self.live_checkpoint = checkpoint
@@ -286,6 +288,25 @@ class Runner:
         except Exception as error:
             print('Vote skipped (%s)' % type(error).__name__, flush=True)
 
+    def complain(self, state, base):
+        """Rarely file a health complaint (final only unless forced), after the order is accepted."""
+        policy = getattr(self.brain, 'final_policy', None)
+        key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
+        if (policy is None or not getattr(self.brain, 'final_active', False) or not self.accepted_order
+                or key in self.complained or not complaints_enabled(state.get('mode'))):
+            return
+        self.complained.add(key)
+        try:
+            decision = policy.complaint_decision(state, self.brain, self.accepted_order)
+            if not decision.get('file'):
+                return
+            status, response = self.client.call('POST', base + COMPLAINT_PATH, {'target': decision['target']}, timeout=3.)
+            caught = policy.complaints.record(state, decision['target'], response if status == 200 else {'error': status})
+            print('  complaint filed (HTTP %s) against %s: %s%s' % (status, decision['target'], decision['reason'],
+                  ' -- CAUGHT, banned' if caught else ''), flush=True)
+        except Exception as error:
+            print('Complaint skipped (%s)' % type(error).__name__, flush=True)
+
     def staff(self, state, base):
         """Set tomorrow's crew once per night, after the order is accepted."""
         key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
@@ -361,6 +382,7 @@ class Runner:
                     self.vote_report(state)
                     self.vote(state, base)
                     self.staff(state, base)
+                    self.complain(state, base)
                     continue
                 if key != self.pending_key or active_features != self.pending_features:
                     try:
@@ -389,6 +411,7 @@ class Runner:
                     self.vote_report(state)
                     self.vote(state, base)
                     self.staff(state, base)
+                    self.complain(state, base)
                     if isinstance(response.get('state'), dict):
                         next_state = response['state']
                 elif status == 409:
