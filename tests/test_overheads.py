@@ -28,12 +28,12 @@ class OverheadTests(unittest.TestCase):
         state['you'].update(last_spot='oval', staff={'employees': 2, 'target': 2, 'wage': 6, 'capacity': 100})
         state['rules']['move_costs'] = {'oval': {'stadium': 8, 'oval': 0}}
         stay, move = Overheads(state, 'oval', False), Overheads(state, 'stadium', False)
-        self.assertEqual((stay.fixed, move.fixed), (12., 20.))
-        self.assertEqual(stay.capacity, 100)
+        self.assertEqual((stay.fixed, move.fixed), (0., 8.))       # moving only; wages follow the meals
+        self.assertEqual(stay.capacity, 500)                       # 10 employees x 50: the game's maximum
         self.assertEqual(stay.profit(60, 60, 8.5, 'premium', 5.5), 168)
         self.assertEqual(stay.profit(0, 0, 8.5, 'premium', 5.5), 0)  # no order, no wages
         order = Brain(samples=4, small_crowds=True).decide(state)
-        self.assertLessEqual(order['meals'], 100)
+        self.assertLessEqual(order['meals'], Rules.read(state).capacity(order['quality']))
 
     def test_first_day_out_is_free(self):
         state = with_rules(moving_costs=True)
@@ -141,3 +141,22 @@ class GameDayLawTests(unittest.TestCase):
         self.assertAlmostEqual(brain.game_day_rate(), .25)
         brain.history = {'x': [{'day': d, 'context': {'events': ['game'] if d % 3 == 0 else []}} for d in range(1, 31)]}
         self.assertGreater(brain.game_day_rate(), .25)
+
+
+class CrewIsNotAHardCapTests(unittest.TestCase):
+    def test_a_one_person_crew_does_not_cap_tomorrows_order_and_wages_follow_the_meals(self):
+        state = with_rules(staff=True)
+        state['you']['staff'] = {'employees': 1, 'target': 1, 'wage': 6.5, 'capacity': 50}
+        oh = Overheads(state, 'oval', False)
+        self.assertGreaterEqual(oh.capacity, 133)            # no longer 50
+        one = oh.profit(40, 50, 8.5, 'premium', 5.5)          # 1 employee
+        two = oh.profit(40, 51, 8.5, 'premium', 5.5)          # 2 employees needed
+        self.assertAlmostEqual(one - two, 5.5 + 6.5, places=6)  # the extra meal's food plus the second wage
+        self.assertEqual(oh.profit(0, 0, 8.5, 'premium', 5.5), 0)
+
+    def test_the_planner_can_order_past_the_current_crews_capacity(self):
+        state = with_rules(staff=True)
+        state['you']['staff'] = {'employees': 1, 'target': 1, 'wage': 6.5, 'capacity': 50}
+        state['forecast']['expected_customers'] = dict.fromkeys(state['forecast']['expected_customers'], 140)
+        order = Brain(samples=6, small_crowds=False).decide(state)
+        self.assertGreater(order['meals'], 50)
