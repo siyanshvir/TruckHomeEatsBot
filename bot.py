@@ -78,8 +78,8 @@ def make_brain(model=None, samples=32, small_crowds=True):
     return brain
 
 
-def fallback(state, target=None):
-    """Bound loss if policy fails: assess all spots using forecast less rival stock (or use the target spot)."""
+def fallback(state):
+    """Bound loss if policy fails: assess all spots using forecast less rival stock."""
     state = without_null_counts(state)
     rules = Rules.read(state)
     forecast = (state.get('forecast') or {}).get('expected_customers') or {}
@@ -89,7 +89,7 @@ def fallback(state, target=None):
         stock = sum(t.get('meals', 0) for t in rivals if t.get('id') != state.get('you', {}).get('id'))
         return max(0., float(forecast.get(spot, 0)) - stock)
     bottom_two = sorted(rules.spots, key=lambda spot: (float(forecast.get(spot, 0)), spot))[:2]
-    spot = target if target in rules.spots else max(bottom_two, key=opportunity)
+    spot = max(bottom_two, key=opportunity)
     meals = min(30, rules.capacity('standard'), int(opportunity(spot) * .35))
     return rules.validate({'spot': spot, 'price': max(rules.price_min, min(rules.price_max, 7.0)),
                            'quality': 'standard', 'meals': max(0, meals)})
@@ -391,7 +391,7 @@ class Runner:
                         where = traceback.extract_tb(error.__traceback__)[-1]
                         print('Policy error (%s: %s at %s:%d); using bounded fallback' %
                               (type(error).__name__, str(error)[:70], Path(where.filename).name, where.lineno), flush=True)
-                        order = fallback(state, getattr(self.brain, 'target_spot', None))
+                        order = fallback(state)
                     self.pending_key, self.pending_order = key, order
                     self.pending_features = active_features
                 order = dict(self.pending_order, **self.final_extras(state, self.pending_order))
@@ -428,7 +428,7 @@ class Runner:
                     time.sleep(1.)
                 elif status == 400:
                     # Avoid a tight loop; one validated conservative replacement.
-                    self.pending_order = fallback(state, getattr(self.brain, 'target_spot', None))
+                    self.pending_order = fallback(state)
                     version = 0
                     time.sleep(.2)
                 else:
