@@ -40,7 +40,7 @@ def events(raw):
         raw = [raw]
     text = ' '.join(str(x) for x in (raw or [])).lower()
     out = []
-    for name, words in (('game', ('game', 'football')), ('midterm', ('midterm', 'exam')),
+    for name, words in (('game', ('game', 'football', 'championship')), ('midterm', ('midterm', 'exam')),
                         ('concert', ('concert',)), ('late', ('late', 'rush')),
                         ('rally', ('rally',))):
         if any(w in text for w in words):

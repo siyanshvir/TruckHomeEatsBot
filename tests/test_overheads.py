@@ -69,6 +69,14 @@ class OverheadTests(unittest.TestCase):
         self.assertIn(fallback(state)['spot'], SPOTS)
 
 
+class FootballTests(unittest.TestCase):
+    def test_game_day_opponent_and_championship_events_are_recognized(self):
+        from game import events
+        self.assertEqual(events([{'key': 'gameday', 'name': 'Game day vs Iowa', 'spot': 'stadium'}]), ['game'])
+        self.assertEqual(events([{'key': 'championship', 'name': 'National Championship'}]), ['game'])
+        self.assertEqual(events([]), [])
+
+
 class VoteRunnerTests(unittest.TestCase):
     def test_votes_once_per_election_and_never_raises(self):
         class Client:

@@ -189,7 +189,7 @@ class Runner:
         self.voted.add(key)
         try:
             choice = choose_vote(state, order)
-            if choice and choice != (state.get('you') or {}).get('vote'):
+            if choice and not (state.get('you') or {}).get('vote'):  # never override a vote already cast
                 status, _ = self.client.call('POST', base + '/vote', {'candidate': choice}, timeout=5.)
                 print('Vote for %s: HTTP %s' % (choice, status), flush=True)
         except Exception as error:
