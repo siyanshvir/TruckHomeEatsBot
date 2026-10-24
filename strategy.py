@@ -166,7 +166,7 @@ class Brain:
         before = {name: dict(reps) for name, reps in self.reputations.items()}
         # Our local reputation is public; undo this day's increment to fit pre-day sales.
         own_reps = dict((state.get('you') or {}).get('reputation') or {})
-        own = last.get('you') or {}
+        own = game.clean_record(last.get('you') or {})
         if own.get('sold', 0) > 0 and own.get('spot') in own_reps:
             s = own['spot']
             # At the cap the exact previous value is ambiguous; prefer tracked history.

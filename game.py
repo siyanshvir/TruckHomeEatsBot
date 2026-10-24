@@ -168,11 +168,37 @@ def weather_factor(weather, spot):
     return table.get(weather, table.get('clear', 1.))
 
 
+def number(value):
+    """Practice data can be deliberately bad: prices arrive as text like '$10.00'. Parse or leave as is."""
+    if isinstance(value, str):
+        try:
+            return float(value.replace('$', '').replace(',', '').strip())
+        except ValueError:
+            return value
+    return value
+
+
+def clean_record(record):
+    """A truck or result record with its numeric fields parsed."""
+    if not isinstance(record, dict):
+        return record
+    out = dict(record)
+    for key in ('price', 'meals', 'sold', 'revenue', 'cost', 'profit', 'customers', 'hungry', 'walked_in', 'walked_out'):
+        if isinstance(out.get(key), str):
+            out[key] = number(out[key])
+    return out
+
+
 def spot_results(last):
     raw = last.get('spots') or {}
     if isinstance(raw, list):
-        return {x.get('spot') or x.get('id'): x for x in raw}
-    return raw
+        raw = {x.get('spot') or x.get('id'): x for x in raw}
+    cleaned = {}
+    for spot, info in raw.items():
+        if isinstance(info, dict):
+            info = dict(clean_record(info), trucks=[clean_record(t) for t in info.get('trucks') or []])
+        cleaned[spot] = info
+    return cleaned
 
 
 @dataclass(frozen=True)

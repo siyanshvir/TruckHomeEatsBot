@@ -144,3 +144,24 @@ class ForecastingTests(unittest.TestCase):
         brain.observe(market.play(replacement))
         self.assertFalse(brain.prediction_checks[-1]['order_matches'])
         self.assertIsNone(brain.prediction_checks[-1]['demand_error'])
+
+
+class BadPracticeDataTests(unittest.TestCase):
+    def test_text_prices_in_a_practice_day_do_not_break_learning_or_observation(self):
+        from game import number, spot_results
+        self.assertEqual(number('$10.00'), 10.0)
+        self.assertEqual(number('1,234'), 1234.0)
+        self.assertEqual(number('n/a'), 'n/a')
+        market = Market('bad-data', rivals=3, days=4)
+        brain = Brain(samples=6, small_crowds=True)
+        state = market.state()
+        state = market.play(brain.decide(state))
+        for info in state['last_day']['spots'].values():
+            for truck in info.get('trucks') or []:
+                truck['price'] = '$%.2f' % float(truck['price'])
+                truck['meals'] = str(truck['meals'])
+        state['last_day']['you']['price'] = '$%.2f' % float(state['last_day']['you']['price'])
+        brain.observe(state)                       # must not raise
+        brain.decide(state)
+        cleaned = spot_results(state['last_day'])
+        self.assertTrue(all(isinstance(t['price'], float) for i in cleaned.values() for t in i.get('trucks') or []))

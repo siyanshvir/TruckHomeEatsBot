@@ -10,6 +10,9 @@ class Overheads:
         self.salvage = salvage
         self.fixed = 0.
         self.wage, self.per, self.capacity = 0., 50, None
+        # Coupons dropped on us and not yet used: each puts 20% of our buyers at half price (stacking to 60%).
+        pending = sum(1 for c in (you.get('coupons') or []) if isinstance(c, dict) and c.get('applied_day') is None)
+        self.coupon_factor = 1. - .5 * min(.6, .2 * pending)
         if flags.get('staff') and isinstance(you.get('staff'), dict):
             crew = you['staff']
             staff_rules = (state.get('rules') or {}).get('staff') or {}
@@ -33,5 +36,5 @@ class Overheads:
             return 0.
         charged = self.charged(price)
         wages = self.wage * max(1, -(-int(meals) // self.per))  # employees needed for these meals
-        return (food_profit(sales, meals, charged, cost, self.salvage)
+        return (food_profit(sales, meals, charged * self.coupon_factor, cost, self.salvage)
                 + law_profit(self.terms, sales, charged, quality) - self.fixed - wages)

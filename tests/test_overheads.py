@@ -160,3 +160,17 @@ class CrewIsNotAHardCapTests(unittest.TestCase):
         state['forecast']['expected_customers'] = dict.fromkeys(state['forecast']['expected_customers'], 140)
         order = Brain(samples=6, small_crowds=False).decide(state)
         self.assertGreater(order['meals'], 50)
+
+
+class CouponDefenceTests(unittest.TestCase):
+    def test_pending_coupons_on_us_cut_expected_revenue_and_stack_to_sixty_percent(self):
+        state = with_rules()
+        none = Overheads(state, 'oval', False).profit(60, 60, 10., 'premium', 5.5)
+        state['you']['coupons'] = [{'day': 3, 'applied_day': None}]
+        one = Overheads(state, 'oval', False).profit(60, 60, 10., 'premium', 5.5)
+        state['you']['coupons'] = [{'day': 3, 'applied_day': None}] * 5
+        many = Overheads(state, 'oval', False).profit(60, 60, 10., 'premium', 5.5)
+        self.assertAlmostEqual(none - one, 60 * 10 * .5 * .2)       # 20% of buyers pay half
+        self.assertAlmostEqual(none - many, 60 * 10 * .5 * .6)      # capped at 60%
+        state['you']['coupons'] = [{'day': 3, 'applied_day': 4}]    # already used: no further effect
+        self.assertEqual(Overheads(state, 'oval', False).profit(60, 60, 10., 'premium', 5.5), none)
