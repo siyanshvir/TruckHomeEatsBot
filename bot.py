@@ -16,6 +16,7 @@ from mechanics import features
 from politics import choose_vote, vote_analysis
 from final_mode import attach_policy
 from complaints import enabled as complaints_enabled, ENDPOINT as COMPLAINT_PATH
+from coupon_play import enabled as coupon_enabled, decide as coupon_decide
 
 ROOT = Path(__file__).resolve().parent
 
@@ -108,6 +109,7 @@ class Runner:
         self.voted = set()
         self.staffed = set()
         self.complained = set()
+        self.couponed = set()
         self.reported = set()
         self.force_final = False
         self.live_checkpoint = checkpoint
@@ -290,6 +292,24 @@ class Runner:
         except Exception as error:
             print('Vote skipped (%s)' % type(error).__name__, flush=True)
 
+    def coupon(self, state, base):
+        """Rarely drop a coupon on the rival we are racing (final only; see coupon_play.py)."""
+        policy = getattr(self.brain, 'final_policy', None)
+        key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
+        if (state.get('you') is None or policy is None or not getattr(self.brain, 'final_active', False)
+                or not self.accepted_order or key in self.couponed or not coupon_enabled(state.get('mode'))):
+            return
+        self.couponed.add(key)
+        try:
+            decision = coupon_decide(state, self.brain.history, policy.adapter.coupon_cost(state) if policy.adapter else 20.)
+            if not decision['drop']:
+                return
+            status, response = self.client.call('POST', base + '/coupons', {'target': decision['target']}, timeout=3.)
+            print('  coupon dropped (HTTP %s) on %s: target loses about $%.0f for our $%.0f' %
+                  (status, decision['target'], decision['loss'], decision['cost']), flush=True)
+        except Exception as error:
+            print('Coupon skipped (%s)' % type(error).__name__, flush=True)
+
     def complain(self, state, base):
         """Rarely file a health complaint (final only unless forced), after the order is accepted."""
         if state.get('you') is None:
@@ -389,6 +409,7 @@ class Runner:
                     self.vote(state, base)
                     self.staff(state, base)
                     self.complain(state, base)
+                    self.coupon(state, base)
                     continue
                 if key != self.pending_key or active_features != self.pending_features:
                     try:
@@ -418,6 +439,7 @@ class Runner:
                     self.vote(state, base)
                     self.staff(state, base)
                     self.complain(state, base)
+                    self.coupon(state, base)
                     if isinstance(response.get('state'), dict):
                         next_state = response['state']
                 elif status == 409:
