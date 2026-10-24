@@ -9,12 +9,11 @@ The strategy lives in strategy.py (see its docstring); sim.py is an offline simu
 import argparse
 import json
 import os
+import random
 import sys
 import time
 import urllib.error
 import urllib.request
-from statistics import NormalDist
-
 
 from strategy import BUDGET, COST, QUALITIES, Brain
 
