@@ -105,5 +105,26 @@ class PolicyTests(unittest.TestCase):
                       'trucks': [{'id': 'x', 'quality': 'premium', 'price': 6, 'meals': 1, 'sold': 1}]}}})
         self.assertAlmostEqual(max(learner.weights['oval'])-min(learner.weights['oval']), 0.)
 
+    def test_inventory_grows_with_future_demand_at_same_low_price(self):
+        state = self.state()
+        state['trucks'] = [{'id': 'us'}]
+        state['order_for_day'] = state['days']
+        brain = Brain(samples=4, small_crowds=True)
+        def prediction(crowd, rivals=()):
+            placements = {s: [] for s in SPOTS}
+            placements['oval'] = list(rivals)
+            crowds = dict.fromkeys(SPOTS, crowd)
+            models = {s: (12, 3, (.4, .4, .2)) for s in SPOTS}
+            return brain.evaluate(state, Rules.read(state), 'oval', 'premium', 8.14,
+                                  [(placements, crowds, models, 3.)] * 4)
+        low, high = prediction(30), prediction(80)
+        contested = prediction(80, [(6., 'premium', 100, 100)])
+        self.assertGreater(high['order']['meals'], low['order']['meals'])
+        self.assertGreater(high['order']['meals'], 36)
+        self.assertLess(contested['order']['meals'], high['order']['meals'])
+        self.assertEqual(high['order']['price'], 8.14)
+        self.assertGreaterEqual(high['demand'], high['sales'])
+        self.assertAlmostEqual(high['expected_unsold'], high['order']['meals']-high['sales'])
+
 
 if __name__ == '__main__': unittest.main()

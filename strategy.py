@@ -202,7 +202,8 @@ class Brain:
             contribution = min(1., meals * cost / 250.)
             left = 0 if contribution <= .5 else 1
             fraction = contribution * 2 if left == 0 else (contribution - .5) * 2
-            sales = [min(meals, d[left] * (1-fraction) + d[left+1] * fraction) for d in distributions]
+            demand = [d[left] * (1-fraction) + d[left+1] * fraction for d in distributions]
+            sales = [min(meals, x) for x in demand]
             mean = sum(sales) / n
             profit = mean * price - meals * cost
             loss = sum(max(0., meals * cost - x * price) for x in sales) / n
@@ -216,6 +217,9 @@ class Brain:
                 score += self.quiet_bonus * quiet
             if best is None or score > best['score']:
                 best = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
+                        'demand': sum(demand) / n,
+                        'expected_unsold': meals - mean,
+                        'sellout_probability': sum(x >= meals for x in demand) / n if meals else 0.,
                         'order': {'spot': spot, 'quality': quality, 'price': price, 'meals': meals}}
         return best
 
