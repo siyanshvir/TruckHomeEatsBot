@@ -118,7 +118,7 @@ class Brain:
         try:
             spots = (state.get('rules') or {}).get('spots') or ()
             extra = [s for s in spots if isinstance(s, str) and s not in SPOTS]
-            if not extra:
+            if not extra or all(s in game._REGISTERED for s in extra):
                 return
             from rules_adapter import RuleAdapter
             normal = RuleAdapter().normalize(state)
@@ -394,7 +394,7 @@ class Brain:
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
-                        'demand': sum(demand) / n, 'calibration': factor, 'score_adjust': adjust,
+                        'demand': sum(demand) / n, 'calibration': factor, 'score_adjust': adjust, 'charged': charged,
                         'expected_unsold': meals - mean,
                         'expected_salvage': (meals-mean)*cost*(.25 if flags['salvage'] else 0.),
                         'sellout_probability': sum(x >= meals for x in demand) / n if meals else 0.,
@@ -499,7 +499,7 @@ class Brain:
                     # thin scenario subset, then re-score only the best two on all scenarios.
                     thin = scenarios[::max(1, len(scenarios) // 6)]
                     coarse = sorted(((self.evaluate(state, rules, spot, quality, price, thin)['score'], price)
-                                     for price in legal[::2] + [legal[-1]]), reverse=True)
+                                     for price in sorted(set(legal[::2]) | {legal[-1]})), reverse=True)
                     legal = sorted({price for _, price in coarse[:2]})
                 candidates = [self.evaluate(state, rules, spot, quality, price, scenarios) for price in legal]
                 if candidates:
@@ -531,7 +531,7 @@ class Brain:
                         'prediction': {'order': dict(order), 'sales': best['sales'],
                                        'features': active_features,
                                        'demand': best['demand'], 'profit': best['profit'],
-                                       'calibration': best.get('calibration', 1.),
+                                       'calibration': best.get('calibration', 1.), 'charged': best.get('charged'),
                                        'rivals': sum(len(p[order['spot']]) for p, _, _, _ in scenarios)/len(scenarios)}}
         self.last_order = order
         ranked = []

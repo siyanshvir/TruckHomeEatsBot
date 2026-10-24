@@ -124,3 +124,20 @@ class RunnerTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class ObserveGuardTests(unittest.TestCase):
+    def test_a_failing_day_observation_does_not_end_the_run(self):
+        class Client:
+            def __init__(self): self.gets = 0
+            def call(self, method, path, body=None, **kwargs):
+                self.gets += 1
+                if self.gets > 3: raise Stop()
+                st = state('live'); st['phase'] = 'day'; st['orders_open'] = False
+                st['last_day'] = {'day': 5, 'spots': {}}
+                return 200, st
+        class Brain(StubBrain):
+            def observe(self, st): raise TypeError('boom')
+        client = Client()
+        with self.assertRaises(Stop): Runner(client, Brain()).play()
+        self.assertEqual(client.gets, 4)

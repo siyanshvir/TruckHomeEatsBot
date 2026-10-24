@@ -108,6 +108,8 @@ class Runner:
         self.reported = set()
         self.force_final = False
         self.live_checkpoint = checkpoint
+        checkpoint = self.resume_path(checkpoint)
+        self.checkpoint = checkpoint
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
@@ -186,6 +188,20 @@ class Runner:
                 except OSError:
                     print('Evaluation log write failed', flush=True)
 
+    @staticmethod
+    def resume_path(checkpoint):
+        """After a restart during the final, resume the final checkpoint (newer than the live one)."""
+        if not checkpoint:
+            return checkpoint
+        live = Path(checkpoint)
+        final = live.parent / 'final-runtime-v1.json'
+        try:
+            if final.exists() and (not live.exists() or final.stat().st_mtime >= live.stat().st_mtime):
+                return final
+        except OSError:
+            pass
+        return live
+
     def profile_wanted(self, state):
         """'final' in final markets (or when forced for practice); 'baseline' otherwise or when killed."""
         if os.environ.get('NIGHTSHIFT_PROFILE') == 'baseline':
@@ -205,8 +221,9 @@ class Runner:
         if want != getattr(self.brain, 'final_active', False):
             self.brain.use_final(want)
             print('Profile: %s' % ('FINAL (adaptive)' if want else 'baseline'), flush=True)
-        if want and state.get('mode') == 'final' and self.live_checkpoint:
-            self.checkpoint = Path(self.live_checkpoint).parent / 'final-runtime-v1.json'  # never the live file
+        if self.live_checkpoint:  # final markets never write the live checkpoint, whatever the profile
+            live = Path(self.live_checkpoint)
+            self.checkpoint = live.parent / 'final-runtime-v1.json' if state.get('mode') == 'final' else live
 
     def final_extras(self, state, order):
         policy = getattr(self.brain, 'final_policy', None)
@@ -216,6 +233,14 @@ class Runner:
             return policy.order_extras(state, order)
         except Exception:
             return {}
+
+    def observe_safely(self, state):
+        """Learning must never end the run: on any error skip that day's learning and keep polling."""
+        try:
+            self.brain.observe(state)
+        except Exception as error:
+            print('Day observation skipped (%s)' % type(error).__name__, flush=True)
+            self.brain.seen = (state.get('last_day') or {}).get('day', getattr(self.brain, 'seen', None))
 
     def vote_report(self, state):
         """Say how the campaign looks for our order. Read-only; it never casts or changes a vote."""
@@ -319,7 +344,7 @@ class Runner:
                     if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
                             getattr(self.brain, 'seen', None) != last['day'] or
                             getattr(self.brain, 'market', None) != key[:2]):
-                        self.brain.observe(state)
+                        self.observe_safely(state)
                         self.archive(state)
                         self.save()
                     self.record_evaluation(state)

@@ -92,3 +92,56 @@ class FinalModeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_restart_during_the_final_resumes_the_final_checkpoint(self):
+        import os, tempfile, time
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            live, final = Path(folder) / 'runtime-v1.json', Path(folder) / 'final-runtime-v1.json'
+            live.write_text('{}')
+            self.assertEqual(Runner.resume_path(live), live)
+            final.write_text('{}')
+            os.utime(final, (time.time() + 5, time.time() + 5))
+            self.assertEqual(Runner.resume_path(live), final)
+            self.assertIsNone(Runner.resume_path(None))
+
+    def test_final_mode_never_writes_the_live_checkpoint_even_with_the_kill_switch(self):
+        import os, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            live = Path(folder) / 'runtime-v1.json'
+            runner = Runner(object(), make_brain(samples=8), live)
+            os.environ['NIGHTSHIFT_PROFILE'] = 'baseline'
+            try:
+                runner.apply_profile({'mode': 'final'})
+            finally:
+                del os.environ['NIGHTSHIFT_PROFILE']
+            self.assertEqual(runner.checkpoint.name, 'final-runtime-v1.json')
+            runner.apply_profile({'mode': 'live'})
+            self.assertEqual(runner.checkpoint, live)
+
+    def test_surprise_days_teach_nothing_and_reward_is_not_the_forecast_gap(self):
+        policy = FinalPolicy()
+        calls = []
+        class Spy:
+            def observe(self, *args): calls.append(args)
+        policy.competition = Spy()
+        order = {'spot': 'thompson', 'quality': 'standard', 'price': 9., 'meals': 80}
+        check = {'order_matches': True, 'order': order, 'actual_sales': 50., 'actual_profit': 150., 'surprise': True, 'sellout': False}
+        policy.observe_day({}, {'day': 3}, {'demand': 90., 'calibration': 1., 'profit': 400.}, check, {'thompson': 60.})
+        self.assertEqual(calls, [])
+        policy.knob_day = 3
+        class Controller:
+            rewards = []
+            def update(self, knobs, reward): self.rewards.append(reward)
+        policy.controller = Controller()
+        policy.profit_mean = 200.
+        policy.observe_day({}, {'day': 3}, {'demand': 90., 'calibration': 1., 'profit': 400.}, dict(check, surprise=False), {'thompson': 60.})
+        self.assertEqual(Controller.rewards, [-50.])  # 150 actual vs a 200 running mean, not vs the 400 forecast
+
+    def test_staged_search_keeps_two_distinct_prices(self):
+        brain = make_final_brain(samples=12)
+        play(brain, days=2)
+        self.assertTrue(brain.diagnostics['candidates'] > 6)

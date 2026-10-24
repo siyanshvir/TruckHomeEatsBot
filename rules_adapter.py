@@ -178,7 +178,7 @@ class RuleAdapter:
     def _repair_cost(self, d, radius):
         return 30. + 120. * math.exp(-d / radius)
 
-    def spot_cost(self, state, spot):
+    def spot_cost(self, state, spot, include_residual=True):
         try:
             cost = 0.
             if _dict(_dict(state).get('features')).get('riots'):
@@ -189,7 +189,7 @@ class RuleAdapter:
                         continue
                     p = min(1., max(0., intensity * math.exp(-d / radius)))
                     cost += p * (.3 * self.profit_proxy + .7 * self._repair_cost(d, radius))
-            if self.streak.get(spot, 0) >= self.min_streak:
+            if include_residual and self.streak.get(spot, 0) >= self.min_streak:
                 cost -= self.residual.get(spot, 0.)
             return cost
         except Exception:

@@ -46,6 +46,7 @@ class FinalPolicy:
                 self.controller = None
         self.knobs = dict(MIDDLE)
         self.knob_day = None
+        self.profit_mean = data.get('profit_mean')
         self.errors = {}
 
     @staticmethod
@@ -70,7 +71,7 @@ class FinalPolicy:
                  'controller': self.controller, 'rules': self.adapter}
         out = {name: self._guard(name, lambda part=part: part.to_dict(), None)
                for name, part in parts.items() if part is not None}
-        return dict(out, knobs=self.knobs, knob_day=self.knob_day)
+        return dict(out, knobs=self.knobs, knob_day=self.knob_day, profit_mean=self.profit_mean)
 
     def restore(self, data):
         for key, cls, attr in (('calibration', Calibrator, 'calibrator'), ('competition', Competition, 'competition'),
@@ -81,6 +82,7 @@ class FinalPolicy:
             self.controller = self._guard('controller', lambda: MetaController(data['controller']), self.controller)
         self.knobs = data.get('knobs') or dict(MIDDLE)
         self.knob_day = data.get('knob_day')
+        self.profit_mean = data.get('profit_mean')
 
     def new_market(self):
         for part in (self.competition, self.controller):
@@ -91,7 +93,8 @@ class FinalPolicy:
     def begin(self, brain, state):
         """Pick tonight's knobs and apply risk and scenario count to the planner."""
         streak = 0
-        for check in reversed(brain.prediction_checks):
+        for check in reversed([c for c in brain.prediction_checks
+                               if c.get('mode') == state.get('mode') and c.get('market') == state.get('market')]):
             if (check.get('actual_profit') or 0) < 0:
                 streak += 1
             else:
@@ -132,7 +135,7 @@ class FinalPolicy:
         if self.competition is not None:
             total += self._guard('competition', lambda: float(self.competition.scaled(spot, state, self.knobs['breadth'])), 0.)
         if self.adapter is not None:
-            total += self._guard('spot_cost', lambda: float(self.adapter.spot_cost(state, spot)), 0.)
+            total += self._guard('spot_cost', lambda: float(self.adapter.spot_cost(state, spot, include_residual=False)), 0.)
         return max(-80., min(80., total))
 
     def order_extras(self, state, order):
@@ -147,16 +150,16 @@ class FinalPolicy:
     def observe_day(self, state, last, prediction, check, rep_before):
         """Learn from the completed day. Runs on live days too (shadow learning)."""
         order = check.get('order') or {}
-        if not check.get('order_matches') or not order:
+        if not check.get('order_matches') or not order or check.get('surprise'):
             return
         spot, quality = order.get('spot'), order.get('quality')
         calibration = prediction.get('calibration') or 1.
         raw = (prediction.get('demand') or 0.) / max(calibration, 1e-6)
         values = (state.get('rules') or {}).get('values') or VALUES
         rep = float((rep_before or {}).get(spot, 50.))
-        if self.calibrator is not None and check.get('actual_sales') is not None and not check.get('surprise'):
+        if self.calibrator is not None and check.get('actual_sales') is not None:
             self._guard('calibrate', lambda: self.calibrator.observe({
-                'spot': spot, 'quality': quality, 'price': order.get('price'),
+                'spot': spot, 'quality': quality, 'price': prediction.get('charged') or order.get('price'),
                 'value_ceiling': reputation_value(quality, rep, values), 'expected_demand': raw,
                 'actual_sales': check['actual_sales'], 'meals': order.get('meals'),
                 'sellout': check.get('sellout'), 'weather': last.get('weather')}), None)
@@ -167,9 +170,12 @@ class FinalPolicy:
         if (self.controller is not None and self.knob_day == last.get('day')
                 and check.get('actual_profit') is not None):
             knobs = Knobs(**self.knobs) if Knobs is not None else None
+            actual = float(check['actual_profit'])
             if knobs is not None:
-                self._guard('update', lambda: self.controller.update(
-                    knobs, float(check['actual_profit']) - float(prediction.get('profit') or 0.)), None)
+                # Reward beats a running mean of real profit, which no knob can inflate by deflating the forecast.
+                baseline = self.profit_mean if self.profit_mean is not None else actual
+                self._guard('update', lambda: self.controller.update(knobs, actual - baseline), None)
+            self.profit_mean = actual if self.profit_mean is None else .8 * self.profit_mean + .2 * actual
 
     def report(self):
         out = {'knobs': self.knobs, 'errors': dict(self.errors)}
