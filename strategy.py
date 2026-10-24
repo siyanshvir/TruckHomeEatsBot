@@ -17,6 +17,7 @@ from forecast_log import capture
 from mechanics import features, demand_levels
 from overheads import Overheads
 from riots import riot_cost
+import posture as posture_mod
 from staffing import CrewModel
 
 # Documented surprise rates; building spots can have a fire drill (open ones today).
@@ -48,6 +49,8 @@ class Brain:
         self.diagnostics = {}
         self.opponents = OpponentModel()
         self.crew = CrewModel()
+        self.cash_history = {}   # day -> {truck id: cash}, for recent daily earnings of every truck
+        self.posture, self._home = dict(posture_mod.NEUTRAL), set()
         self.phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
         self.surprises = {'days': 0, 'fire': 0, 'give': 0}  # counted from last_day.moments
         self.protests = {'days': 0, 'protests': 0, 'against_us': 0}  # office days seen and protests among them
@@ -78,6 +81,7 @@ class Brain:
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
                 'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom, 'surprises': self.surprises, 'protests': self.protests,
+                'cash_history': {str(d): v for d, v in self.cash_history.items()},
                 'final': self._final_state()}
 
     def restore(self, data):
@@ -88,6 +92,7 @@ class Brain:
         self.phantom = data.get('phantom') or self.bootstrap_phantom(self.prediction_checks)
         self.surprises = data.get('surprises') or {'days': 0, 'fire': 0, 'give': 0}
         self.protests = data.get('protests') or {'days': 0, 'protests': 0, 'against_us': 0}
+        self.cash_history = {int(d): v for d, v in (data.get('cash_history') or {}).items()}
         if self.final_policy is not None and data.get('final'):
             self.final_policy.restore(data['final'])
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
@@ -258,6 +263,7 @@ class Brain:
                 self.reputations[identity(t)] = dict(t['reputation'])
         self.reputations[me] = dict((state.get('you') or {}).get('reputation') or {s: 50. for s in SPOTS})
         self.seen = last['day']
+        posture_mod.note_cash(self.cash_history, state)
         try:
             self.crew.observe(state, me)
         except (TypeError, ValueError, KeyError, ZeroDivisionError):
@@ -411,13 +417,18 @@ class Brain:
             sales = [min(meals, x) for x in demand]
             mean = sum(sales) / n
             profit = overheads.profit(mean, meals, price, quality, cost)
-            loss = sum(max(0., -overheads.profit(x, meals, price, quality, cost)) for x in sales) / n
+            outcomes = [overheads.profit(x, meals, price, quality, cost) for x in sales]
+            loss = sum(max(0., -p) for p in outcomes) / n
+            upside = sum(max(0., p - profit) for p in outcomes) / n
             # Small, bounded future benefit: no incentive to lose hundreds buying reputation.
             sale_probability = sum(x > .1 for x in sales) / n
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
             future = clamp(future, -25., 25.)
             exploration = 3. * min(1., remaining / 15.) * (1-self.learner.confidence(spot)) * sale_probability
-            score = profit - self.risk * loss + future + exploration - adjust - riots
+            post = self.posture
+            roam = post['explore'] * quiet * sale_probability if spot not in self._home else 0.
+            score = (profit - self.risk * post['risk_scale'] * loss + future + exploration - adjust - riots
+                     + post['upside'] * upside + roam)
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
@@ -486,6 +497,10 @@ class Brain:
             state = dict(state, order_for_day=next_day)
         rules = Rules.read(state)
         counts = self.forecast(state, rules)
+        me_id = identity(state.get('you') or {})
+        self.posture = (posture_mod.read(state, self.cash_history, (state.get('you') or {}).get('id'))
+                        if posture_mod.enabled() else dict(posture_mod.NEUTRAL))
+        self._home = {r['spot'] for r in self.history.get(me_id, [])[-5:] if 'spot' in r}
         if self.final_active:
             self.final_policy.begin(self, state)
         # Walking couples all campus crowds, but only eligible destinations can
@@ -569,7 +584,7 @@ class Brain:
                 ranked.append({**r, 'forecast': counts[spot]})
         self.diagnostics = {'elapsed': time.perf_counter()-started, 'coverage': coverage,
                             'candidates': len(results), 'ranking': sorted(ranked, key=lambda r: -r['score']),
-                            'chosen': best, 'location_rule': {k: v for k, v in restriction.items() if k != 'best'},
+                            'posture': dict(self.posture), 'chosen': best, 'location_rule': {k: v for k, v in restriction.items() if k != 'best'},
                             'scenario_count': len(scenarios), 'prediction_checks': self.prediction_checks,
                             'features': active_features,
                             'rivals': {identity(t): self.opponents.summary(identity(t),

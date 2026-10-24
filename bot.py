@@ -171,6 +171,10 @@ class Runner:
             print('  %-9s %-8s $%5.2f x%3d predicted sales %.1f profit $%.0f' %
                   (candidate['spot'], candidate['quality'], candidate['price'], candidate['meals'],
                    result['sales'], result['profit']), flush=True)
+        post = diag.get('posture') or {}
+        if post and (post.get('pressure') or post.get('lead')):
+            print('  posture: pressure %.2f lead %.2f -> risk weight x%.2f, upside %.2f, roam bonus up to $%.0f' %
+                  (post['pressure'], post['lead'], post['risk_scale'], post['upside'], post['explore']), flush=True)
         print('  chose %s; search %.3fs' % (order, diag.get('elapsed', 0)), flush=True)
 
     def record_evaluation(self, state):
