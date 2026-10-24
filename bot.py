@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 from strategy import BUDGET, COST, QUALITIES, Brain
+from contrarian import ContrarianBrain
 
 
 def load_env(path=".env"):
@@ -139,6 +140,8 @@ def play(base):
                 pass
             log_state(state)
             order = decide(state)
+            if getattr(BRAIN, "rival_note", "") and not USE_STARTER:
+                print("  " + BRAIN.rival_note)
             if order is None and state.get("mode") == "practice":
                 # a practice day only advances once we order: buy one meal nobody will pay for
                 order = {"spot": "stadium", "price": 30.0, "quality": "premium", "meals": 1}
@@ -203,9 +206,12 @@ def main():
     ap.add_argument("--days", type=int, default=30, help="practice market length")
     ap.add_argument("--rivals", type=int, help="practice house rivals")
     ap.add_argument("--starter", action="store_true", help="play the original starter strategy instead")
+    ap.add_argument("--contrarian", action="store_true", help="park at the least crowded spot and upcharge")
     args = ap.parse_args()
-    global USE_STARTER
+    global USE_STARTER, BRAIN
     USE_STARTER = args.starter
+    if args.contrarian:
+        BRAIN = ContrarianBrain()
     if not KEY:
         sys.exit("Set NIGHTSHIFT_KEY first (you get it when you register).")
     if args.practice:

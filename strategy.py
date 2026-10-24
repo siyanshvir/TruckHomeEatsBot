@@ -72,6 +72,9 @@ PARAMS = {
     "min_profit": 1.0,    # sit out unless the order is expected to make at least this much
     "price_sd": 1.0,      # default day-to-day price spread assumed for adaptive rivals
     "psd_min": 0.4,       # smallest price spread assumed for a rival that changes its prices
+    "undercut": 0.25,     # always price at least this far below a watched rival of equal or better quality
+    "watch_prob": 0.25,   # watch a rival at a spot if it parked there yesterday or is this likely to show up
+    "min_margin": 0.5,    # never undercut below cost plus this much
 }
 
 # Grid of corrections to the prior customer model that the learner weighs per spot.
@@ -281,6 +284,7 @@ class Brain:
         self.days_at = {s: 0 for s in SPOTS}
         if keep:      # same rivals and same customers in every market: carry over what we learned
             self.rivals, self.logw, self.wfac, self.cal, self.me = keep
+        self.rival_note = ""
 
     # ---- bookkeeping
 
@@ -553,6 +557,7 @@ class Brain:
         self.pending_forecast = (day, dict(expected), dict(probs))
         my_reps = (state.get("you") or {}).get("reputation") or {}
         samples = self.rival_predictions(state, expected, day)
+        watch = self.rival_watch(samples)
 
         best = None
         cands = []
@@ -564,7 +569,12 @@ class Brain:
             scen = self.scenarios(spot, expected[spot], probs)
             groups = self.spot_groups(samples, spot)
             for qi in range(3):
+                ceil = self.price_ceiling(watch, spot, qi)
+                if ceil is not None and ceil <= COST[qi] + p["min_margin"]:
+                    continue   # can't undercut the rivals here at this quality and still make money
                 prices = self._price_grid(qi, rf, groups)
+                if ceil is not None:
+                    prices = sorted(set(x for x in prices if x <= ceil) | {ceil})
                 for price in prices:
                     res = self._evaluate(spot, qi, price, rf, rep, mu, sd, qmix, scen, groups, days_left)
                     cands.append(res)
@@ -591,9 +601,12 @@ class Brain:
             scen = self.scenarios(spot, expected[spot], probs)
             groups = self.spot_groups(samples, spot)
             base = res[1]["price"]
+            ceil = self.price_ceiling(watch, spot, qi)
             for k in range(-10, 11):
                 price = round(base + 0.05 * k, 2)
                 if price <= COST[qi] or price > min(30.0, VALUE[qi] * rf):
+                    continue
+                if ceil is not None and price > ceil:
                     continue
                 r2 = self._evaluate(spot, qi, price, rf, rep, mu, sd, qmix, scen, groups, days_left)
                 if r2[0] > best[0]:
@@ -602,10 +615,40 @@ class Brain:
                     break
             if time.time() - t0 > p["time_budget"]:
                 break
+        self.rival_note = self._rival_note(watch, best[1]["spot"]) if best else ""
         if best is None or best[2] < p["min_profit"]:
             return None
         self.days_at[best[1]["spot"]] += 1
         return best[1]
+
+    def rival_watch(self, samples):
+        """{spot: [(name, price, q)]}: rivals that parked there yesterday or are likely to show up."""
+        n = max(1, len(samples))
+        watch = {s: [] for s in SPOTS}
+        for name, hist in self.rivals.items():
+            last = hist[-1]
+            if self.seen_day is not None and last.get("day") != self.seen_day:
+                last = None   # it didn't play yesterday; rely on the predicted placements only
+            for s in SPOTS:
+                share = sum(1 for smp in samples if any(r[0] == name for r in smp[s])) / n
+                if (last and last["spot"] == s) or share >= self.p["watch_prob"]:
+                    ref = last or hist[-1]
+                    watch[s].append((name, ref["price"], ref["q"]))
+        return watch
+
+    def price_ceiling(self, watch, spot, qi):
+        """Highest price allowed at this spot and quality: just under every equal-or-better rival."""
+        rivals = [rp for (_, rp, rq) in watch.get(spot, []) if rq >= qi]
+        if not rivals:
+            return None
+        return round(min(rivals) - self.p["undercut"], 2)
+
+    def _rival_note(self, watch, spot):
+        rivals = watch.get(spot, [])
+        if not rivals:
+            return "no rivals expected at %s" % spot
+        return "RIVAL WATCH at %s: " % spot + ", ".join(
+            "%s (%s $%.2f)" % (name, QUALITIES[q], price) for name, price, q in rivals)
 
     def _price_grid(self, qi, rf, groups):
         cap = min(30.0, VALUE[qi] * rf)
