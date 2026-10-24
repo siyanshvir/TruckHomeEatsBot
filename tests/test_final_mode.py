@@ -182,3 +182,45 @@ class ShowcaseAndPriorTests(unittest.TestCase):
         self.assertAlmostEqual(brain.protest_rate(), .30)
         brain.protests = {'days': 40, 'protests': 4, 'against_us': 0}
         self.assertLess(brain.protest_rate(), .30)
+
+
+class FinalStartResetTests(unittest.TestCase):
+    def test_reset_clears_the_tuner_and_competition_but_keeps_learning_elsewhere(self):
+        brain = make_final_brain(samples=8)
+        play(brain, days=4)
+        policy = brain.final_policy
+        policy.controller.update(type(policy.controller.choose())(1.0, .5, .1), 5.)
+        policy.competition.observe({'you': {'id': 'x', 'profit': 10}, 'spots': {}}, {'spot': 'oval', 'quality': 'standard', 'price': 8, 'meals': 50}, {'profit': 100})
+        calibration, rates = policy.calibrator.to_dict(), (brain.phantom, brain.surprises, brain.protests)
+        learner = brain.learner.to_dict()
+        self.assertTrue(policy.reset_for_final())
+        self.assertFalse(policy.reset_for_final())           # only once
+        self.assertEqual(policy.calibrator.to_dict(), calibration)  # price-response learning is kept
+        self.assertEqual((brain.phantom, brain.surprises, brain.protests), rates)
+        self.assertEqual(brain.learner.to_dict(), learner)    # customer and crowd learning is kept
+        self.assertEqual(policy.to_dict()['competition'], type(policy.competition)().to_dict())
+        self.assertTrue(policy.final_started)
+
+    def test_a_restart_during_the_final_does_not_reset_again(self):
+        brain = make_final_brain(samples=8)
+        brain.final_policy.reset_for_final()
+        other = make_final_brain(samples=8)
+        other.restore(brain.dump())
+        self.assertFalse(other.final_policy.reset_for_final())
+
+    def test_runner_resets_once_on_the_first_final_state(self):
+        runner = Runner(object(), make_final_brain(samples=8))
+        runner.apply_profile({'mode': 'live'})
+        self.assertFalse(runner.brain.final_policy.final_started)
+        runner.apply_profile({'mode': 'final'})
+        self.assertTrue(runner.brain.final_policy.final_started)
+
+    def test_adapter_riot_cost_follows_the_law_multiplier(self):
+        from rules_adapter import RuleAdapter
+        state = {'features': {'riots': True}, 'forecast': {'events': [{'name': 'The Game', 'effect': 'a riot may follow a Michigan loss'}]},
+                 'rules': {'spots': ['highst', 'thompson']}}
+        base = RuleAdapter().spot_cost(state, 'highst', include_residual=False)
+        crack = dict(state, politics={'laws': [{'key': 'crackdown', 'params': {'game_crowd': {'other': 1.1}, 'riot': 0}}]})
+        tail = dict(state, politics={'laws': [{'key': 'tailgate', 'params': {'game_crowd': {'other': .9}, 'riot': 1.5}}]})
+        self.assertEqual(RuleAdapter().spot_cost(crack, 'highst', include_residual=False), 0)
+        self.assertGreater(RuleAdapter().spot_cost(tail, 'highst', include_residual=False), base)

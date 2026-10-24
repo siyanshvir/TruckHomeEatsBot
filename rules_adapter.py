@@ -82,6 +82,15 @@ def distances_for(state):
     return out
 
 
+def _riot_law_scale(state):
+    """Election laws scale riot fierceness (crackdown 0, tailgate 1.5); 1 when no law says so."""
+    try:
+        from riots import law_multiplier
+        return max(0., float(law_multiplier(state)))
+    except Exception:
+        return 1.
+
+
 class RuleAdapter:
     def __init__(self, data=None):
         data = _dict(data)
@@ -182,13 +191,14 @@ class RuleAdapter:
         try:
             cost = 0.
             if _dict(_dict(state).get('features')).get('riots'):
+                scale = _riot_law_scale(state)
                 dist = distances_for(state if isinstance(state, dict) else {})
                 for intensity, radius, center, _ in self._riot_warnings(state):
                     d = 0. if spot == center else dist.get((spot, center), dist.get((center, spot)))
                     if d is None:
                         continue
                     p = min(1., max(0., intensity * math.exp(-d / radius)))
-                    cost += p * (.3 * self.profit_proxy + .7 * self._repair_cost(d, radius))
+                    cost += scale * p * (.3 * self.profit_proxy + .7 * self._repair_cost(d, radius))
             if include_residual and self.streak.get(spot, 0) >= self.min_streak:
                 cost -= self.residual.get(spot, 0.)
             return cost

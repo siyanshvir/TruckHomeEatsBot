@@ -221,6 +221,8 @@ class Runner:
         if want != getattr(self.brain, 'final_active', False):
             self.brain.use_final(want)
             print('Profile: %s' % ('FINAL (adaptive)' if want else 'baseline'), flush=True)
+        if state.get('mode') in ('final', 'showcase') and hasattr(policy, 'reset_for_final') and policy.reset_for_final():
+            print('Final start: tuner, competition and rule residuals reset; customer, rival, calibration and crew learning kept', flush=True)
         if self.live_checkpoint:  # final markets never write the live checkpoint, whatever the profile
             live = Path(self.live_checkpoint)
             self.checkpoint = live.parent / 'final-runtime-v1.json' if state.get('mode') in ('final', 'showcase') else live

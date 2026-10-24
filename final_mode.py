@@ -47,6 +47,8 @@ class FinalPolicy:
         self.knobs = dict(MIDDLE)
         self.knob_day = None
         self.profit_mean = data.get('profit_mean')
+        self.final_started = bool(data.get('final_started'))
+        self.seed, self.priors = seed, priors
         self.errors = {}
 
     @staticmethod
@@ -71,7 +73,7 @@ class FinalPolicy:
                  'controller': self.controller, 'rules': self.adapter}
         out = {name: self._guard(name, lambda part=part: part.to_dict(), None)
                for name, part in parts.items() if part is not None}
-        return dict(out, knobs=self.knobs, knob_day=self.knob_day, profit_mean=self.profit_mean)
+        return dict(out, knobs=self.knobs, knob_day=self.knob_day, profit_mean=self.profit_mean, final_started=self.final_started)
 
     def restore(self, data):
         for key, cls, attr in (('calibration', Calibrator, 'calibrator'), ('competition', Competition, 'competition'),
@@ -83,6 +85,23 @@ class FinalPolicy:
         self.knobs = data.get('knobs') or dict(MIDDLE)
         self.knob_day = data.get('knob_day')
         self.profit_mean = data.get('profit_mean')
+        self.final_started = bool(data.get('final_started'))
+
+    def reset_for_final(self):
+        """First final state: the tuner, competition and unexplained-profit residuals were learned under
+        live conditions (reputation 100, one market), so they start fresh. Customer, crowd, rival,
+        calibration, crew and event-rate learning lives elsewhere and is kept. Runs once, even across restarts."""
+        if self.final_started:
+            return False
+        if MetaController is not None:
+            self.controller = self._guard('reset', lambda: MetaController(None, seed=self.seed, priors=self.priors.get('controller')), self.controller)
+        if Competition is not None:
+            self.competition = self._build(Competition, None) or self.competition
+        if RuleAdapter is not None:
+            self.adapter = self._build(RuleAdapter, None) or self.adapter
+        self.knobs, self.knob_day, self.profit_mean = dict(MIDDLE), None, None
+        self.final_started = True
+        return True
 
     def new_market(self):
         for part in (self.competition, self.controller):
