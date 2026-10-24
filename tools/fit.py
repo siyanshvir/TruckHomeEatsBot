@@ -3,8 +3,8 @@
     python3 tools/fit.py data/collect.jsonl
 """
 import json, os, random, sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import model
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import bot as model
 
 SPOTS = ["oval", "thompson", "union", "stadium", "highst", "northres"]
 
