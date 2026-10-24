@@ -73,6 +73,9 @@ class Market:
                 spot = rng.choices(SPOTS, weights=[forecast[s]+20 for s in SPOTS])[0]
             else:
                 spot = SPOTS[index % 6] if rng.random() < .7 else rng.choice(SPOTS)
+            if self.style == 'brutal':
+                orders[name] = self.brutal_order(index, name, forecast, rng)
+                continue
             quality = ('premium', 'standard', 'cheap')[index % 3]
             price = {'premium': 9.25, 'standard': 7.25, 'cheap': 5.25}[quality]
             if self.style == 'moving': price += rng.uniform(-1, 1)
@@ -89,6 +92,36 @@ class Market:
             orders[name] = {'spot': spot, 'quality': quality, 'price': round(price, 2),
                             'meals': int(500/COSTS[quality]) if index % 2 == 0 else 55}
         return orders
+
+    def brutal_order(self, index, name, forecast, rng):
+        """Aggressive premium rivals: campers, a hunter that shadows and undercuts us, a copycat of
+        yesterday's winner, a price-war truck, a crowd chaser and a mover. All use only public data."""
+        kind = index % 6
+        crowd = max(forecast, key=forecast.get)
+        mine = (self.last or {}).get('you') or {}
+        if kind == 0:     # camper: one home spot, premium just under $10
+            return {'spot': SPOTS[(index // 6 + index) % 6], 'quality': 'premium', 'price': round(9.4 + rng.random()*.5, 2), 'meals': 90}
+        if kind == 1:     # hunter: parks where we parked and undercuts us by a nickel
+            if mine.get('spot'):
+                return {'spot': mine['spot'], 'quality': 'premium', 'price': round(max(8., min(11., mine['price']) - .05), 2), 'meals': 90}
+            return {'spot': crowd, 'quality': 'premium', 'price': 9.5, 'meals': 90}
+        if kind == 2:     # copycat: repeats yesterday's most profitable order
+            best = None
+            for spot, info in ((self.last or {}).get('spots') or {}).items():
+                for t in info['trucks']:
+                    gain = t['sold']*t['price'] - t['meals']*COSTS[t['quality']]
+                    if best is None or gain > best[0]:
+                        best = (gain, spot, t)
+            if best:
+                t = best[2]
+                return {'spot': best[1], 'quality': t['quality'], 'price': t['price'], 'meals': min(t['meals'], int(500/COSTS[t['quality']]))}
+            return {'spot': crowd, 'quality': 'premium', 'price': 9.75, 'meals': 90}
+        if kind == 3:     # price war: premium near cost wherever the crowd is
+            return {'spot': crowd, 'quality': 'premium', 'price': 8.5, 'meals': 90}
+        if kind == 4:     # chaser: biggest crowd, mid price
+            return {'spot': crowd, 'quality': 'premium', 'price': 9.75, 'meals': 90}
+        spots = rng.choices(SPOTS, weights=[forecast[s] + 20 for s in SPOTS])[0]
+        return {'spot': spots, 'quality': 'premium', 'price': round(rng.uniform(9, 10.5), 2), 'meals': 90}
 
     def play(self, own_order):
         rules = Rules.read(self.state())

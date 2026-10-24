@@ -83,6 +83,14 @@ class PolicyTests(unittest.TestCase):
         restored.restore(json.loads(json.dumps(brain.dump())))
         self.assertEqual(first, restored.decide(state))
 
+    def test_daytime_read_only_forecast_uses_forecast_day(self):
+        state = self.state()
+        state['order_for_day'] = None
+        state['forecast']['day'] = 2
+        brain = Brain(samples=4)
+        Rules.read(state).validate(brain.decide(state))
+        self.assertEqual(brain.pending['day'], 2)
+
     def test_reported_day_eight_loss_is_not_repeated(self):
         state = json.loads((Path(__file__).parent / 'fixtures' / 'day9.json').read_text())
         brain = make_brain()

@@ -6,6 +6,7 @@ Price Wars' documented undercut/cycle behaviors are pricing hypotheses, not rule
 that our own order must obey. No future or private orders are used.
 """
 import math
+from pricing_models import reference_prices
 from game import SPOTS, QUALITIES, COSTS, VALUES, clamp, events, weather_probs
 
 LOCATION_MODELS = ('uniform', 'habit', 'repeat', 'crowd', 'context', 'opportunity')
@@ -112,8 +113,7 @@ class OpponentModel:
         competitors = [h[-1]['price'] for rival, h in histories.items() if rival != name and h
                        and h[-1]['quality'] == quality and (spot is None or h[-1]['spot'] == spot)]
         floor, upper = COSTS[quality]+.5, min(VALUES[quality]-.5, default+3.)
-        undercut = max(floor, min(competitors)-.05) if competitors else mean
-        cycle = upper if competitors and (min(competitors) <= floor or min(competitors) > upper) else undercut
+        undercut, cycle = reference_prices(competitors, mean, floor, upper)
         return [mean, repeat, undercut, cycle], max(.2, min(2., math.sqrt(variance+.16))), stock
 
     def pricing(self, name, history, forecast, histories, quality, spot=None):

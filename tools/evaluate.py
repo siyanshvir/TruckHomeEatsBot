@@ -30,7 +30,8 @@ class Cautious:
 
 def policy(name):
     if name == 'learned': return make_brain()
-    if name == 'untrained': return Brain(Learner())
+    if name == 'untrained': return Brain(Learner(), small_crowds=True)
+    if name == 'unrestricted': return make_brain(small_crowds=False)
     if name == 'cautious': return Cautious()
     raise ValueError(name)
 

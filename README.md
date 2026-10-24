@@ -1,7 +1,7 @@
 # Truck Home Eats — Night Shift bot
 
 Python 3.8+, standard library only. Learns customer demand and competitor habits,
-then optimizes location, quality, price, and inventory for expected profit.
+then optimizes quality, price, and inventory within your location and pricing rules.
 
 Configure `NIGHTSHIFT_KEY` in your existing `.env` or environment. Keep it private.
 
@@ -15,6 +15,20 @@ Start only one live process for your truck. A GitHub push does not restart an
 already-running bot. This rebuild removes the old starter/contrarian/learning
 entry points; use `bot.py`.
 
+## Current location and pricing rules
+
+Production orders are restricted to the **three smallest customer forecasts**.
+The two smallest receive preference. The third can win only when its predicted
+profit exceeds the best of the bottom two by at least $15 or 15%, whichever is
+larger, and its risk-adjusted score is also better. The three busier spots are
+excluded regardless of their predicted profit. Event/weather effects are already
+included in the supplied forecast counts used for this ranking.
+
+Price ceilings are **$5.50 cheap, $7 standard, $8.50 premium**. The optimizer can
+charge less when supported by its sales forecast. The fallback also uses the
+bottom two and caps standard at $7. These are deliberate user constraints and
+can reduce achievable profit compared with unrestricted optimization.
+
 ## Decisions
 
 Each decision evaluates all six locations and all three qualities before any
@@ -25,18 +39,21 @@ The model learns a distribution over customer budget and minimum-quality
 preferences from observed sales across the market. Sequential customer-choice
 modeling includes reputation, affordability, stockouts, and overflow. A sellout
 is a lower bound on demand, not evidence that demand stops at the sold count.
-Rival scenarios combine recent placements, historical habits, learned responses
-to event crowds, prices, quality, stock, and uncertain local reputation. Only
+Rival scenarios use a learned mixture of location models: uniform uncertainty,
+multi-day habits, repeat behavior, crowd chasing, context matching, and opportunity
+seeking. Historical neighbors match tomorrow's announced events, weather odds,
+and crowd shares. Pricing combines contextual historical prices with repeat,
+undercut, and price-cycle hypotheses. Quality and stock use multiple historical
+observations. Attendance is learned from both orders and absences. Only
 registered rivals are modeled; no invented extra competitors are added.
 
 For each location/quality/price, every feasible integer inventory, including
 zero, competes on expected revenue minus food costs and a downside-loss penalty.
 Production's contribution to campus demand is approximated at three levels and
 interpolated. A bounded reputation benefit declines toward the end of a market;
-a small information bonus encourages early exploration. Prices have no arbitrary
-$10.50 cap and do not have to undercut rivals: overflow and local reputation can
-make a higher price profitable. Prices still obey the game's limits and the
-maximum nonnegative customer value for that quality and reputation.
+a small information bonus encourages early exploration. Prices obey the low ceilings above, the game's limits, and the maximum
+nonnegative customer value for that quality and reputation. Within those limits,
+they do not have to undercut every rival: overflow and reputation can still matter.
 
 `forecast.expected_customers` is the starting point. It already incorporates
 weather/events. Weather scenarios are normalized around those counts, and online
@@ -68,6 +85,22 @@ Logs in `data/decisions-v1.jsonl` include each spot's best candidate, predicted
 sales/profit, actual state, and chosen order. Credentials and local history stay
 out of Git. Original saved data files are preserved.
 
+Saved public live observations are replayed from `data/live-observations/` at
+startup without submitting historical orders. The supplied day-nine results and
+available earlier live days have been archived locally. Duplicate/out-of-order
+results are ignored. A final-market checkpoint is never overwritten by old live
+data. Predictions and observations are scored in order, before updating history.
+
+```sh
+python3 bot.py --predict                 # current live forecast; submits nothing
+python3 tools/backtest_opponents.py      # walk-forward held-out prediction scoring
+```
+
+The read-only prediction is saved to `data/next-prediction.json`. It includes
+rival attendance probabilities, location probabilities, expert-model weights,
+the allowed/preferred locations, and the chosen order. The running bot archives
+public results and learns during the day, before the next short order window.
+
 The runner long-polls, identifies orders by `(mode, market, order_for_day)`, sends
 before logging to disk, retries uncertain submissions using the cached order,
 and immediately refreshes after phase conflicts. A policy exception invokes a
@@ -82,7 +115,7 @@ learned customer model reduced censor-aware held-out sales error from 4.09 to
 3.03 meals per observed truck (about 26%). This measures sales prediction on
 known historical lineups, not counterfactual profitability.
 
-The final optimizer was also compared with the cautious policy on four official
+Before adding the user-requested small-crowd/low-price constraints, the optimizer was compared with the cautious policy on four official
 30-day practice markets: two unseen seeds, each with three and seven house
 rivals. It won all four, averaging $13,924.01 versus $6,832.81, with a maximum
 measured decision time of 0.210 seconds. These are practice results against house
@@ -95,17 +128,34 @@ including customer-distribution misspecification and finite stock. Offline
 results are stress signals, not official-engine results. Available rival styles
 include `mixed`, `crowd`, `moving`, `undercut`, and `cycle`.
 
-The undercut/cycle stress opponents are independent implementations inspired by
-the documented Cheapest and Two Bound examples in
+The pricing prediction models directly adapt the MIT-licensed Cheapest and
+Two Bound reference strategies from
 [Price Wars Merchant](https://github.com/hpi-epic/pricewars-merchant).
-No third-party source or backend is bundled. Price Wars uses a different
-marketplace protocol; Night Shift's official API remains the backend.
+The two strategy classes are pinned to commit
+`7981dad52034493f1f77e21e2aa297598c6ef769` in `vendor/pricewars_strategies.py`,
+with the original notice in `vendor/PRICEWARS-LICENSE.md`. `pricing_models.py`
+adapts their offer interface and bounds to this game. Price Wars' marketplace,
+Kafka and Flink services are not needed to run this bot. The historical-data
+workflow and competitive benchmarks follow the same separation of logged
+observations, merchant strategies, and evaluation. Its analytics profit formula
+is not used: Night Shift charges for ALL cooked meals, including spoilage.
+
+`model/prediction-validation.json` records walk-forward scoring and final policy
+tests. Prediction models are evaluated before seeing each outcome. The held-out
+house-bot location log loss improved versus a repeat-location predictor; price
+MAE was slightly worse than repeating the last price on these largely stable
+house bots. More complex modeling is not assumed to improve every metric.
+Hard simulations exercise undercutters, campers, hunters, copycats, crowd chasers,
+and moving rivals; those approximations are not added to the shipped customer
+prior as if they were official observations.
 
 ## Files
 
 - `game.py`: rule parsing and customer-flow approximation.
 - `learning.py`: customer/forecast learning and training-data loading.
-- `strategy.py`: competitor scenarios and profit optimization.
+- `strategy.py`: competitor scenarios and constrained profit optimization.
+- `opponents.py`, `pricing_models.py`: contextual rival prediction and Price Wars adapter.
+- `history.py`: safe, chronological local live-history replay.
 - `bot.py`: API client, runtime persistence, logging, and CLI.
 - `tools/train.py`, `tools/evaluate.py`: training and isolated comparisons.
 - `sim.py`, `tests/`: offline stress environment and regression checks, including

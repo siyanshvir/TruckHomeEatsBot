@@ -15,9 +15,13 @@ from opponents import OpponentModel, context
 
 
 class Brain:
-    def __init__(self, learner=None, seed=42, samples=12, risk=.15):
+    def __init__(self, learner=None, seed=42, samples=12, risk=.15, price_cap=None, quiet_bonus=0., small_crowds=False):
         self.learner = learner or Learner()
         self.seed, self.samples, self.risk = seed, max(4, int(samples)), float(risk)
+        # Optional steering: never charge above price_cap; reward spots where rivals rarely park.
+        self.price_cap, self.quiet_bonus = price_cap, float(quiet_bonus)
+        self.small_crowds = bool(small_crowds)
+        self.low_price_caps = {'cheap': 5.50, 'standard': 7.00, 'premium': 8.50}
         self.market = None
         self.seen = None
         self.history = {}
@@ -62,9 +66,6 @@ class Brain:
         before[me] = own_reps
         forecast = self.pending['forecast'] if self.pending and self.pending['day'] == last['day'] else None
         self.learner.learn(last, before, forecast, rules, strength=.7)
-        observed_counts = {s: float(info.get('customers', 0)) for s, info in spot_results(last).items()}
-        ranked_counts = (forecast or {}).get('expected_customers') or observed_counts
-        busiest = max(ranked_counts.values(), default=0)
         observed_context = context(forecast or {'events': last.get('events') or []})
         visited = {}
         records = {}
@@ -195,6 +196,7 @@ class Brain:
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
         best = None
         n = len(distributions)
+        quiet = sum(1 for placement, _, _, _ in scenarios if not placement[spot]) / max(1, n)
         # Every feasible integer inventory is considered, including zero.
         for meals in range(cap + 1):
             contribution = min(1., meals * cost / 250.)
@@ -210,14 +212,39 @@ class Brain:
             future = clamp(future, -25., 25.)
             exploration = 3. * min(1., remaining / 15.) * (1-self.learner.confidence(spot)) * sale_probability
             score = profit - self.risk * loss + future + exploration
+            if meals and self.quiet_bonus:
+                score += self.quiet_bonus * quiet
             if best is None or score > best['score']:
                 best = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
                         'order': {'spot': spot, 'quality': quality, 'price': price, 'meals': meals}}
         return best
 
+    def location_restriction(self, results, counts, spots):
+        if not self.small_crowds:
+            return {'best': max(results, key=lambda r: r['score']), 'enabled': False}
+        # User rule: the THREE SMALLEST CUSTOMER forecasts, not the lowest rival
+        # occupancy. Prefer the bottom two; the third must clear a profit hurdle.
+        ordered = sorted(spots, key=lambda s: (counts[s], s))
+        eligible, preferred = ordered[:3], ordered[:2]
+        allowed = [r for r in results if r['order']['spot'] in eligible]
+        first_two = [r for r in allowed if r['order']['spot'] in preferred]
+        best = max(first_two or allowed, key=lambda r: r['score'])
+        third = [r for r in allowed if r['order']['spot'] not in preferred]
+        hurdle = max(15., .15*max(0., best['profit']))
+        if third:
+            challenger = max(third, key=lambda r: r['score'])
+            if challenger['profit'] > best['profit']+hurdle and challenger['score'] > best['score']:
+                best = challenger
+        return {'best': best, 'enabled': True, 'rank_by': 'forecast_customers',
+                'eligible': eligible, 'preferred': preferred, 'third_profit_hurdle': hurdle,
+                'price_caps': dict(self.low_price_caps)}
+
     def decide(self, state):
         started = time.perf_counter()
         self.observe(state)
+        if state.get('order_for_day') is None:
+            next_day = (state.get('forecast') or {}).get('day') or int(state.get('day', 0))+1
+            state = dict(state, order_for_day=next_day)
         rules = Rules.read(state)
         counts = self.forecast(state, rules)
         digest = hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'))).encode()).digest()
@@ -230,7 +257,9 @@ class Brain:
             coverage[spot] = []
             for quality in QUALITIES:
                 coverage[spot].append(quality)
-                ceiling = min(rules.price_max, reputation_value(quality, rep, rules.values))
+                ceiling = min(rules.price_max, self.price_cap or rules.price_max,
+                              self.low_price_caps[quality] if self.small_crowds else rules.price_max,
+                              reputation_value(quality, rep, rules.values))
                 low = max(rules.price_min, rules.costs[quality] + .25)
                 # Coarse prices plus value-equivalent rival thresholds; prices above
                 # rivals remain eligible to capture overflow and reputation advantages.
@@ -259,14 +288,17 @@ class Brain:
             top = max(local, key=lambda r: r['score'])
             quality, base = top['order']['quality'], top['order']['price']
             rep = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
-            ceiling = min(rules.price_max, reputation_value(quality, rep, rules.values))
+            ceiling = min(rules.price_max, self.price_cap or rules.price_max,
+                              self.low_price_caps[quality] if self.small_crowds else rules.price_max,
+                              reputation_value(quality, rep, rules.values))
             for step in (-.5, -.25, .25, .5):
                 price = round(base + step, 2)
                 if max(rules.price_min, rules.costs[quality]+.01) <= price <= ceiling:
                     results.append(self.evaluate(state, rules, spot, quality, price, scenarios))
         if not results:
             raise ValueError('No legal candidates for supplied rules')
-        best = max(results, key=lambda r: r['score'])
+        restriction = self.location_restriction(results, counts, rules.spots)
+        best = restriction['best']
         order = rules.validate(best['order'])
         self.pending = {'day': state.get('order_for_day'), 'forecast': state.get('forecast') or {}}
         self.last_order = order
@@ -278,7 +310,8 @@ class Brain:
                 ranked.append({**r, 'forecast': counts[spot]})
         self.diagnostics = {'elapsed': time.perf_counter()-started, 'coverage': coverage,
                             'candidates': len(results), 'ranking': sorted(ranked, key=lambda r: -r['score']),
-                            'chosen': best, 'rivals': {identity(t): self.opponents.summary(identity(t),
+                            'chosen': best, 'location_rule': {k: v for k, v in restriction.items() if k != 'best'},
+                            'rivals': {identity(t): self.opponents.summary(identity(t),
                                 self.history.get(identity(t), []), state.get('forecast') or {},
                                 self.history, rules.spots) for t in state.get('trucks') or []
                                 if identity(t) != identity(state.get('you') or {})}}

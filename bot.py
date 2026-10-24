@@ -9,6 +9,7 @@ import urllib.request
 from game import Rules, SPOTS
 from learning import Learner
 from strategy import Brain
+from history import warm_start
 
 ROOT = Path(__file__).resolve().parent
 
@@ -59,10 +60,10 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def make_brain(model=None, samples=12):
+def make_brain(model=None, samples=12, small_crowds=True):
     path = Path(model) if model else ROOT / 'model' / 'prior.json'
     learner = Learner.load(path) if path.exists() else Learner()
-    return Brain(learner=learner, samples=samples)
+    return Brain(learner=learner, samples=samples, small_crowds=small_crowds)
 
 
 def fallback(state):
@@ -74,9 +75,10 @@ def fallback(state):
         rivals = (last.get(spot) or {}).get('trucks') or []
         stock = sum(t.get('meals', 0) for t in rivals if t.get('id') != state.get('you', {}).get('id'))
         return max(0., float(forecast.get(spot, 0)) - stock)
-    spot = max(rules.spots, key=opportunity)
+    bottom_two = sorted(rules.spots, key=lambda spot: (float(forecast.get(spot, 0)), spot))[:2]
+    spot = max(bottom_two, key=opportunity)
     meals = min(30, rules.capacity('standard'), int(opportunity(spot) * .35))
-    return rules.validate({'spot': spot, 'price': max(rules.price_min, min(rules.price_max, 7.5)),
+    return rules.validate({'spot': spot, 'price': max(rules.price_min, min(rules.price_max, 7.0)),
                            'quality': 'standard', 'meals': max(0, meals)})
 
 
@@ -101,7 +103,16 @@ class Runner:
             except OSError:
                 print('Checkpoint write failed', flush=True)
 
+    def archive(self, state):
+        if self.log and state.get('mode') in ('live', 'final') and (state.get('last_day') or {}).get('day') is not None:
+            try:
+                name = '%s-%d-day%02d.json' % (state['mode'], int(state.get('market') or 1), state['last_day']['day'])
+                atomic_json(Path(self.log).parent / 'live-observations' / name, state)
+            except (OSError, ValueError, TypeError):
+                print('Live observation archive failed', flush=True)
+
     def record(self, state, order):
+        self.archive(state)
         if self.log:
             try:
                 Path(self.log).parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +153,13 @@ class Runner:
                     return state
                 key = [state.get('mode'), state.get('market'), state.get('order_for_day')]
                 if state.get('phase') != 'night' or not state.get('orders_open') or key == self.accepted:
+                    last = state.get('last_day') or {}
+                    if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
+                            getattr(self.brain, 'seen', None) != last['day'] or
+                            getattr(self.brain, 'market', None) != key[:2]):
+                        self.brain.observe(state)
+                        self.archive(state)
+                        self.save()
                     continue
                 if key != self.pending_key:
                     try:
@@ -186,6 +204,7 @@ class Runner:
 def main():
     parser = argparse.ArgumentParser(description='Learned Night Shift profit optimizer')
     parser.add_argument('--practice', action='store_true')
+    parser.add_argument('--predict', action='store_true', help='Read live state and save a prediction without submitting')
     parser.add_argument('--seed', default='rebuild-check')
     parser.add_argument('--days', type=int, default=30)
     parser.add_argument('--rivals', type=int, default=3)
@@ -193,6 +212,8 @@ def main():
     parser.add_argument('--model', type=Path)
     parser.add_argument('--fresh', action='store_true', help='Ignore live checkpoint')
     args = parser.parse_args()
+    if args.predict and args.practice:
+        parser.error('--predict is for a read-only live forecast; omit --practice')
     load_env()
     client = Client()
     brain = make_brain(args.model, args.samples)
@@ -207,6 +228,22 @@ def main():
     runner = Runner(client, brain, checkpoint,
                     ROOT / 'data' / ('practice-v1.jsonl' if args.practice else 'decisions-v1.jsonl'),
                     resume=not args.fresh)
+    if not args.practice:
+        loaded = warm_start(runner.brain, ROOT)
+        print('Loaded %d additional saved live days' % loaded, flush=True)
+    if args.predict:
+        status, state = client.call('GET', '/api/v1/state?since=0')
+        if status != 200:
+            raise RuntimeError('State request failed (HTTP %s)' % status)
+        if state.get('order_for_day') is None:
+            state = dict(state, order_for_day=(state.get('forecast') or {}).get('day') or state.get('day', 0)+1)
+        order = runner.brain.decide(state)
+        atomic_json(ROOT / 'data' / 'next-prediction.json',
+                    {'mode': state.get('mode'), 'market': state.get('market'),
+                     'order_for_day': state.get('order_for_day'), 'submitted': False,
+                     'order': order, 'diagnostics': runner.brain.diagnostics})
+        print('Prediction only; no order submitted:', order)
+        return
     final = runner.play(base)
     if final:
         print('Practice complete: $%.2f' % final['you']['cash'])
