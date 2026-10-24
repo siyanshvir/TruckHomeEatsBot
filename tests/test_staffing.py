@@ -153,3 +153,27 @@ class PhantomTests(unittest.TestCase):
         data = brain.dump(); data.pop('phantom')
         legacy = Brain(samples=4); legacy.restore(data)
         self.assertIn('events', legacy.phantom)
+
+
+class LearnedSurpriseRateTests(unittest.TestCase):
+    def test_rates_start_at_the_documented_values_and_follow_what_is_observed(self):
+        brain = Brain(samples=4)
+        self.assertAlmostEqual(brain.surprise_rate('fire', .06), .06)
+        brain.surprises = {'days': 60, 'fire': 0, 'give': 30}
+        self.assertLess(brain.surprise_rate('fire', .06), .06)
+        self.assertGreater(brain.surprise_rate('give', .10), .10)
+        other = Brain(samples=4); other.restore(brain.dump())
+        self.assertEqual(other.surprises, brain.surprises)
+
+    def test_moments_in_last_day_are_counted_once_per_day(self):
+        from sim import Market
+        market = Market('surprise-count', rivals=3, days=4, features={'fair_choice': True, 'walk_over': True, 'salvage': True})
+        brain = Brain(samples=4, small_crowds=True)
+        state = market.state()
+        order = brain.decide(state)
+        state = market.play(order)
+        state['features'] = dict(state.get('features') or {}, surprises=True)
+        state['last_day']['moments'] = [{'kind': 'firedrill', 'spot': 'thompson'}, {'kind': 'giveaway', 'spot': 'oval'}]
+        brain.observe(state)
+        brain.observe(state)  # the same day again must not be counted twice
+        self.assertEqual(brain.surprises, {'days': 1, 'fire': 1, 'give': 1})

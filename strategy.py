@@ -49,6 +49,7 @@ class Brain:
         self.opponents = OpponentModel()
         self.crew = CrewModel()
         self.phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
+        self.surprises = {'days': 0, 'fire': 0, 'give': 0}  # counted from last_day.moments
         self.prediction_checks = []
         self.forecast_record = None
         self.scenario_rivals = []
@@ -75,7 +76,7 @@ class Brain:
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
-                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom,
+                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom, 'surprises': self.surprises,
                 'final': self._final_state()}
 
     def restore(self, data):
@@ -84,6 +85,7 @@ class Brain:
         self.prediction_checks = data.get('prediction_checks', [])
         self.crew = CrewModel(data.get('crew'))
         self.phantom = data.get('phantom') or self.bootstrap_phantom(self.prediction_checks)
+        self.surprises = data.get('surprises') or {'days': 0, 'fire': 0, 'give': 0}
         if self.final_policy is not None and data.get('final'):
             self.final_policy.restore(data['final'])
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
@@ -107,6 +109,11 @@ class Brain:
                 days[record.get('day')] = days.get(record.get('day'), False) or (
                     'game' in ((record.get('context') or {}).get('events') or []))
         return (sum(days.values()) + 1.) / (len(days) + 4.)
+
+    def surprise_rate(self, kind, prior):
+        """Fire-drill / giveaway chance per day: the documented rate, updated by what we have seen."""
+        weight = 30.
+        return (self.surprises['days'] and (self.surprises[kind] + prior * weight) / (self.surprises['days'] + weight)) or prior
 
     def phantom_rate(self):
         low, high = PHANTOM_LIMITS
@@ -163,6 +170,11 @@ class Brain:
         # Fire drills and giveaways thin a spot's crowd after the forecast; do not learn that as bias.
         surprise_spots = {m.get('spot') for m in last.get('moments') or []
                           if isinstance(m, dict) and m.get('kind') in ('firedrill', 'giveaway')}
+        if (state.get('features') or {}).get('surprises'):  # learn how often surprises really happen
+            kinds = {m.get('kind') for m in last.get('moments') or [] if isinstance(m, dict)}
+            self.surprises['days'] += 1
+            self.surprises['fire'] += 'firedrill' in kinds
+            self.surprises['give'] += 'giveaway' in kinds
         prediction = (self.pending or {}).get('prediction') if forecast else None
         if prediction:
             order = prediction['order']
@@ -277,6 +289,8 @@ class Brain:
         field = [h[-1] for name, h in self.history.items() if name in roster and h]
         scenarios = []
         self.scenario_rivals = []
+        fire_rate = self.surprise_rate('fire', FIRE_DRILL_CHANCE)
+        giveaway_rate = self.surprise_rate('give', GIVEAWAY_CHANCE)
         # Own stream: unforeseen rivals must not shift the draws used for everything else.
         phantoms = random.Random(hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'),
                                                       'phantom')).encode()).digest())
@@ -321,9 +335,9 @@ class Brain:
             thinned = {}
             if (state.get('features') or {}).get('surprises'):
                 buildings = [s for s in rules.spots if s in BUILDINGS]
-                if buildings and rng.random() < FIRE_DRILL_CHANCE:
+                if buildings and rng.random() < fire_rate:
                     thinned[rng.choice(buildings)] = .6
-                if rng.random() < GIVEAWAY_CHANCE:
+                if rng.random() < giveaway_rate:
                     target = rng.choice(rules.spots)
                     thinned[target] = thinned.get(target, 1.) * rng.uniform(.6, .8)
             for spot in rules.spots:
