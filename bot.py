@@ -100,6 +100,7 @@ class Runner:
         self.pending_key = self.pending_order = None
         self.pending_features = None
         self.voted = set()
+        self.staffed = set()
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
@@ -194,6 +195,38 @@ class Runner:
         except Exception as error:
             print('Vote skipped (%s)' % type(error).__name__, flush=True)
 
+    def staff(self, state, base):
+        """Set tomorrow's crew once per night, after the order is accepted."""
+        key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
+        order = self.accepted_order
+        if not order or key in self.staffed or not hasattr(self.brain, 'crew_plan'):
+            return
+        self.staffed.add(key)
+        try:
+            plan = self.brain.crew_plan(state, order)
+            if not plan:
+                return
+            note = 'unchanged'
+            if plan['change']:
+                status, _ = self.client.call('POST', base + '/staff',
+                                             {'staff': plan['headcount'], 'wage': plan['wage']}, timeout=5.)
+                note = 'set (HTTP %s)' % status
+            self.brain.diagnostics['crew'] = plan
+            print('  crew %s: %d at $%.2f (was %d at $%.2f); need %d for %d meals; P(enough) %.0f%%; '
+                  'expected wages $%.0f; poach %.1f%%/exposed rival, %d exposed; pool ask median %s, %s unemployed' %
+                  (note, plan['headcount'], plan['wage'], plan['current'][0], plan['current'][1],
+                   plan['needed'], order['meals'], 100*plan['prob_enough_staff'], plan['expected_daily_wages'],
+                   100*plan['poach_rate_per_exposed_rival'], plan['rivals_exposed'],
+                   '%.2f' % plan['pool_median_ask'] if plan['pool_median_ask'] else '?',
+                   plan['unemployed']), flush=True)
+            checks = self.brain.crew.checks[-1:]
+            if checks:
+                c = checks[0]
+                print('  crew check day %d: predicted %.1f employees, actual %d, poached %d' %
+                      (c['day'], c['predicted_employees'], c['actual_employees'], c['poached']), flush=True)
+        except Exception as error:
+            print('Crew plan skipped (%s)' % type(error).__name__, flush=True)
+
     def play(self, base='/api/v1'):
         version, next_state, backoff = 0, None, .25
         while True:
@@ -234,6 +267,7 @@ class Runner:
                     self.record_evaluation(state)
                     self.health(state)
                     self.vote(state, base)
+                    self.staff(state, base)
                     continue
                 if key != self.pending_key or active_features != self.pending_features:
                     try:
@@ -254,6 +288,7 @@ class Runner:
                     self.save()
                     self.health(state)
                     self.vote(state, base)
+                    self.staff(state, base)
                     if isinstance(response.get('state'), dict):
                         next_state = response['state']
                 elif status == 409:

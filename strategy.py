@@ -15,6 +15,11 @@ from opponents import OpponentModel, context
 from forecast_log import capture
 from mechanics import features, demand_levels
 from overheads import Overheads
+from staffing import CrewModel
+
+# Documented surprise rates; building spots can have a fire drill (open ones today).
+BUILDINGS = ('thompson', 'union', 'northres')
+FIRE_DRILL_CHANCE, GIVEAWAY_CHANCE = .06, .10
 
 
 class Brain:
@@ -35,6 +40,7 @@ class Brain:
         self.last_order = None
         self.diagnostics = {}
         self.opponents = OpponentModel()
+        self.crew = CrewModel()
         self.prediction_checks = []
         self.forecast_record = None
         self.scenario_rivals = []
@@ -43,12 +49,13 @@ class Brain:
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
-                'prediction_checks': self.prediction_checks}
+                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict()}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
         self.opponents = OpponentModel(data.get('opponents'))
         self.prediction_checks = data.get('prediction_checks', [])
+        self.crew = CrewModel(data.get('crew'))
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
             setattr(self, key, data[key])
 
@@ -82,6 +89,9 @@ class Brain:
             realized_features = self.pending.get('features')
         if realized_features is None and 'features' not in state:
             realized_features = {}  # Legacy archives and fixtures before feature flags.
+        # Fire drills and giveaways thin a spot's crowd after the forecast; do not learn that as bias.
+        surprise_spots = {m.get('spot') for m in last.get('moments') or []
+                          if isinstance(m, dict) and m.get('kind') in ('firedrill', 'giveaway')}
         prediction = (self.pending or {}).get('prediction') if forecast else None
         if prediction:
             order = prediction['order']
@@ -97,13 +107,16 @@ class Brain:
                      'expected_profit': prediction['profit'], 'actual_profit': own.get('profit'),
                      'expected_rivals': prediction['rivals'],
                      'actual_rivals': sum(identity(t) != me for t in actual.get('trucks', [])),
-                     'sellout': matched and order['meals'] > 0 and sold >= order['meals']}
+                     'sellout': matched and order['meals'] > 0 and sold >= order['meals'],
+                     'surprise': order['spot'] in surprise_spots}
             # A sold-out truck reveals only a lower bound on uncapped demand.
             check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
                                      else abs(sold-prediction['demand'])) if matched else None
             self.prediction_checks = (self.prediction_checks + [check])[-48:]
         if realized_features is not None:
-            self.learner.learn(last, before, forecast, rules, strength=.7, features=realized_features)
+            fit = last if not surprise_spots else dict(last, spots={s: v for s, v in spot_results(last).items()
+                                                                    if s not in surprise_spots})
+            self.learner.learn(fit, before, forecast, rules, strength=.7, features=realized_features)
         observed_context = context(forecast or {'events': last.get('events') or []})
         visited = {}
         records = {}
@@ -142,6 +155,19 @@ class Brain:
                 self.reputations[identity(t)] = dict(t['reputation'])
         self.reputations[me] = dict((state.get('you') or {}).get('reputation') or {s: 50. for s in SPOTS})
         self.seen = last['day']
+        try:
+            self.crew.observe(state, me)
+        except (TypeError, ValueError, KeyError, ZeroDivisionError):
+            pass  # crew learning must never block ordering
+
+    def crew_plan(self, state, order):
+        """Headcount and wage for the accepted order; None when staff is not live."""
+        if not (state.get('features') or {}).get('staff') or not isinstance(
+                (state.get('you') or {}).get('staff'), dict):
+            return None
+        record = self.forecast_record if (self.forecast_record or {}).get('order') == order else None
+        sales = [r['sales'] for r in (record or {}).get('scenarios', [])]
+        return self.crew.plan(state, order, sales, identity(state.get('you') or {}))
 
     def forecast(self, state, rules):
         fc = state.get('forecast') or {}
@@ -209,13 +235,22 @@ class Brain:
                 named.append({'id': name, 'spot': spot, 'price': price,
                               'quality': q, 'reputation': rep, 'meals': meals})
                 active += min(1., meals * rules.costs[q] / 250.)
+            thinned = {}
+            if (state.get('features') or {}).get('surprises'):
+                buildings = [s for s in rules.spots if s in BUILDINGS]
+                if buildings and rng.random() < FIRE_DRILL_CHANCE:
+                    thinned[rng.choice(buildings)] = .6
+                if rng.random() < GIVEAWAY_CHANCE:
+                    target = rng.choice(rules.spots)
+                    thinned[target] = thinned.get(target, 1.) * rng.uniform(.6, .8)
             crowds, models = {}, {}
             for spot in rules.spots:
                 average = sum(p * weather_factor(w, spot) for w, p in odds.items())
                 conditional = weather_factor(weather, spot) / max(average, .1)
                 correction = self.learner.crowd_multiplier(spot, weather)
                 width = math.sqrt(3.) * self.learner.crowd_noise(spot, weather)
-                crowds[spot] = counts[spot] * conditional * correction * rng.uniform(1-width, 1+width)
+                crowds[spot] = (counts[spot] * conditional * correction * rng.uniform(1-width, 1+width)
+                                * thinned.get(spot, 1.))
                 models[spot] = customer_model(spot, kinds, self.learner.sample(spot, rng))
             scenarios.append((placements, crowds, models, active))
             self.scenario_rivals.append(named)

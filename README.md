@@ -129,6 +129,21 @@ spots) are ignored rather than modeled, and the crew size and wage are left at
 the API defaults. Campus-crowd laws, meat/veggie, coupons, football and riots are
 not modeled.
 
+## Crew planning and surprises
+
+`staffing.py` chooses tomorrow's headcount and wage each night from the accepted
+order: enough employees for the meals (50 each), minimizing expected wages plus
+expected lost sales from a short crew. It learns the unemployed pool's asking
+wages from `labor`, how often rivals paying $3+ (or 10%) more poach our
+employees, and logs predicted versus actual crew size. The runner sets it with
+`POST /staff` only for a clear gain, then prints the crew line each night. The
+poach rate starts from a weak prior, and the retention prior for lowering wages is
+an assumption.
+
+Surprises (live from day 24): scenarios thin a random building spot's crowd 40%
+on 6% of days and a random spot's by 20-40% on 10%. Hit spots are flagged and
+kept out of crowd learning. Rates come from the docs, not from data.
+
 ## Learning and persistence
 
 The accepted-order ledger `data/forecasts-v2.jsonl` now freezes code/model hashes,
