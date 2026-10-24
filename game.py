@@ -25,6 +25,82 @@ WEATHER = {
 }
 
 
+# Weather factors for spots registered at run time (new spots); the original six use WEATHER above.
+SPOT_WEATHER = {}
+_REGISTERED = []
+# Mild default per weather for new spots; the Mirror is outdoors, the Med Center is rain-proof.
+_NEW_SPOT_WEATHER = {
+    'mirror': {'clear': 1., 'cloudy': .95, 'rain': .5, 'cold': .8},
+    'medcenter': {'clear': 1., 'cloudy': 1., 'rain': 1., 'cold': 1.},
+}
+_MILD_WEATHER = {'clear': 1., 'cloudy': .97, 'rain': .9, 'cold': .95}
+
+
+def known_spots():
+    """The original six plus any spots registered at run time, in registration order."""
+    return SPOTS + tuple(_REGISTERED)
+
+
+def register_spots(priors, distances, weather=None):
+    """Add new spots to PRIORS/DISTANCES/SPOT_WEATHER in place; all-or-nothing, original data untouched.
+
+    priors: {spot: (mu, sd, mix, weight)} or {spot: {'mu','sd','mix','weight'}}.
+    distances: {(a, b): metres} or {a: {b: metres}}; pairs between two original spots are ignored.
+    weather: optional {spot: {weather: factor}}; default is the built-in new-spot table, else mild.
+    """
+    new_priors, new_weather, new_dist = {}, {}, {}
+    for spot, raw in dict(priors or {}).items():
+        if spot in SPOTS or not isinstance(spot, str):
+            continue
+        if isinstance(raw, dict):
+            raw = (raw['mu'], raw['sd'], raw['mix'], raw['weight'])
+        mu, sd, mix, weight = raw
+        mix = tuple(float(x) for x in mix)
+        values = [float(mu), float(sd), float(weight)] + list(mix)
+        if len(mix) != 3 or not all(math.isfinite(x) for x in values) or sd <= 0:
+            raise ValueError('Invalid prior for %s' % spot)
+        new_priors[spot] = (float(mu), float(sd), mix, float(weight))
+        table = dict(_NEW_SPOT_WEATHER.get(spot, _MILD_WEATHER))
+        table.update(dict(weather or {}).get(spot) or {})
+        new_weather[spot] = {str(k): float(v) for k, v in table.items()}
+    allowed = set(SPOTS) | set(_REGISTERED) | set(new_priors)
+    pairs = []
+    for key, value in dict(distances or {}).items():
+        if isinstance(value, dict):
+            pairs.extend(((key, other), d) for other, d in value.items())
+        else:
+            pairs.append((key, value))
+    for (left, right), distance in pairs:
+        distance = float(distance)
+        if left == right or left not in allowed or right not in allowed or not math.isfinite(distance) or distance < 0:
+            continue
+        if left in SPOTS and right in SPOTS:
+            continue
+        new_dist.setdefault(left, {})[right] = distance
+        new_dist.setdefault(right, {})[left] = distance
+    PRIORS.update(new_priors)
+    SPOT_WEATHER.update(new_weather)
+    for spot in new_priors:
+        if spot not in _REGISTERED:
+            _REGISTERED.append(spot)
+    for spot, row in new_dist.items():
+        DISTANCES.setdefault(spot, {}).update(row)
+    for spot in new_priors:
+        DISTANCES.setdefault(spot, {})
+
+
+def reset_spots():
+    """Drop every registered spot (tests and kill-switch); the original six are restored untouched."""
+    for spot in _REGISTERED:
+        PRIORS.pop(spot, None)
+        SPOT_WEATHER.pop(spot, None)
+        DISTANCES.pop(spot, None)
+    for row in DISTANCES.values():
+        for spot in _REGISTERED:
+            row.pop(spot, None)
+    del _REGISTERED[:]
+
+
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
@@ -86,7 +162,10 @@ def weather_probs(forecast):
 
 
 def weather_factor(weather, spot):
-    return WEATHER.get(weather, WEATHER['clear'])[SPOTS.index(spot)]
+    if spot in SPOTS:
+        return WEATHER.get(weather, WEATHER['clear'])[SPOTS.index(spot)]
+    table = SPOT_WEATHER.get(spot) or {}
+    return table.get(weather, table.get('clear', 1.))
 
 
 def spot_results(last):
@@ -110,7 +189,7 @@ class Rules:
         r = state.get('rules') or {}
         return cls(float(r.get('budget', 500)), dict(r.get('costs') or COSTS),
                    dict(r.get('values') or VALUES),
-                   tuple(s for s in (r.get('spots') or SPOTS) if s in SPOTS),
+                   tuple(s for s in (r.get('spots') or SPOTS) if s in SPOTS or s in _REGISTERED),
                    float(r.get('price_min', 1)), float(r.get('price_max', 30)))
 
     def capacity(self, quality):

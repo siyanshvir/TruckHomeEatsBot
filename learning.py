@@ -3,7 +3,7 @@ import copy
 import json
 import math
 from pathlib import Path
-from game import (SPOTS, QUALITIES, REP_CHANGE, PRIORS, Rules, clamp, customer_model,
+from game import (SPOTS, known_spots, QUALITIES, REP_CHANGE, PRIORS, Rules, clamp, customer_model,
                   events, expected_sales, identity, spot_results, weather_factor, weather_probs)
 
 # Broad enough to represent uncertainty rather than fitting one guessed distribution.
@@ -50,6 +50,14 @@ class Learner:
         return {name: getattr(self, name) for name in
                 ('weights', 'counts', 'crowd', 'crowd_variance', 'rows')}
 
+    def _ensure(self, spot):
+        """Lazily create learner state for a spot added after construction (new spots)."""
+        if spot not in self.weights:
+            self.weights[spot] = [0.] * len(PARTICLES)
+        self.counts.setdefault(spot, 0)
+        self.crowd.setdefault(spot, {})
+        self.crowd_variance.setdefault(spot, {})
+
     def _bind(self, bank):
         for name, value in bank.items():
             setattr(self, name, value)
@@ -88,8 +96,7 @@ class Learner:
         def read_bank(raw):
             bank = cls._fresh_bank()
             bank.update({name: copy.deepcopy(raw[name]) for name in bank if name in raw})
-            for spot in SPOTS:
-                weights = bank['weights'][spot]
+            for weights in bank['weights'].values():
                 if len(weights) != len(PARTICLES) or not all(math.isfinite(x) for x in weights):
                     raise ValueError('Invalid learned weights')
             return bank
@@ -113,6 +120,7 @@ class Learner:
         return cls.from_dict(json.loads(Path(path).read_text()))
 
     def posterior(self, spot):
+        self._ensure(spot)
         raw = self.weights[spot]
         maximum = max(raw)
         weights = [math.exp(x - maximum) for x in raw]
@@ -123,7 +131,8 @@ class Learner:
         return rng.choices(PARTICLES, weights=self.posterior(spot), k=1)[0]
 
     def confidence(self, spot):
-        return self.counts[spot] / (self.counts[spot] + 20.)
+        count = self.counts.get(spot, 0)
+        return count / (count + 20.)
 
     def learn(self, last, before_reps=None, forecast=None, rules=None, strength=1., features=None):
         if features is not None:
@@ -136,8 +145,9 @@ class Learner:
         if isinstance(weather, dict):
             weather = weather.get('kind') or weather.get('type') or 'clear'
         for spot, info in spot_results(last).items():
-            if spot not in SPOTS:
+            if spot not in SPOTS and spot not in known_spots():
                 continue
+            self._ensure(spot)
             customers = max(0., float(info.get('customers', 0)))
             records = info.get('trucks') or []
             trucks = [(float(t['price']), t['quality'],
@@ -201,12 +211,12 @@ class Learner:
         self.rows += 1
 
     def crowd_multiplier(self, spot, weather):
-        mean, count = self.crowd[spot].get(weather, [1., 0])
+        mean, count = self.crowd.get(spot, {}).get(weather, [1., 0])
         return 1. + (mean - 1.) * count / (count + 12.)
 
     def crowd_noise(self, spot, weather):
         """Relative standard deviation; shrink sparse observations toward old +/-15% noise."""
-        count, mean, m2 = self.crowd_variance[spot].get(weather, [0, 0., 0.])
+        count, mean, m2 = self.crowd_variance.get(spot, {}).get(weather, [0, 0., 0.])
         prior_variance = .15**2 / 3.
         relative_m2 = m2 / max(.25, mean)**2 if count else 0.
         variance = (relative_m2 + 12 * prior_variance) / (max(0, count-1) + 12)
