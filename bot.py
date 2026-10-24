@@ -70,7 +70,7 @@ def make_brain(model=None, samples=32, small_crowds=True):
     # only the additional downside penalty to permit supported demand growth.
     return Brain(learner=learner, samples=samples, small_crowds=small_crowds,
                  risk=.08 if small_crowds else .15,
-                 spot_price_lift={'thompson': 1.39})
+                 spot_price_lift={'thompson': 1.56})
 
 
 def fallback(state):
