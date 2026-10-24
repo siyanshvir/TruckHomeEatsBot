@@ -166,6 +166,23 @@ class House:
                       if t["quality"] == "premium"]
             price = round((min(prices) - 0.05) if prices else 10.5, 2)
             return {"spot": rng.choice(S.SPOTS), "price": max(9.0, price), "quality": "premium", "meals": 90}
+        last = state.get("last_day") or {}
+        if self.kind == "camper":       # premium squatter: stays put and builds a reputation moat
+            return {"spot": self.home, "price": round(9.6 + self.rng.random() * 0.8, 2), "quality": "premium", "meals": 90}
+        if self.kind == "hunter":       # parks next to our truck and undercuts it by 5 cents
+            mine = (last.get("by") or {}).get("me") or {}
+            if mine.get("spot"):
+                return {"spot": mine["spot"], "price": max(8.5, round(mine["price"] - 0.05, 2)), "quality": "premium", "meals": 90}
+            return {"spot": rng.choice(S.SPOTS), "price": 10.0, "quality": "premium", "meals": 90}
+        if self.kind == "copycat":      # copies whoever made the most money yesterday
+            by = [o for o in (last.get("by") or {}).values() if o.get("spot")]
+            top = max(by, key=lambda o: o.get("profit", 0)) if by else None
+            if top:
+                return {"spot": top["spot"], "price": top["price"], "quality": top["quality"], "meals": 100}
+            return {"spot": rng.choice(S.SPOTS), "price": 10.5, "quality": "premium", "meals": 90}
+        if self.kind == "warlord":      # price war: premium at near cost, wherever the crowd is
+            exp = state["forecast"]["expected_customers"]
+            return {"spot": max(exp, key=exp.get), "price": 8.75, "quality": "premium", "meals": 90}
         events = state["forecast"]["events"]
         keys = [e["key"] for e in events]
         if self.kind == "eddie":         # the practice server's house bots
@@ -248,11 +265,24 @@ def run_market(seed, players, rivals=3, smart=0, days=30, rival_kinds=None):
 SEEDS = list(range(1001, 1021))
 
 
-def evaluate(make_bot, seeds=SEEDS, rivals=3, smart=0, days=30):
-    profits = []
-    for seed in seeds:
-        cash = run_market(seed, {"me": make_bot(seed)}, rivals=rivals, smart=smart, days=days)
-        profits.append(cash["me"])
+HARD_KINDS = ("camper", "camper", "hunter", "copycat", "warlord", "pchaser", "undercut", "chaser")
+
+
+def _one(job):
+    """One market for one bot (top-level so a process pool can run it)."""
+    who, seed, rivals, smart, days, kinds = job
+    bot = Starter() if who == "starter" else S.Brain(seed=seed)
+    return run_market(seed, {"me": bot}, rivals=rivals, smart=smart, days=days, rival_kinds=kinds)["me"]
+
+
+def evaluate(who, seeds=SEEDS, rivals=3, smart=0, days=30, kinds=None, workers=1):
+    jobs = [(who, seed, rivals, smart, days, kinds) for seed in seeds]
+    if workers > 1:
+        from multiprocessing import Pool
+        with Pool(workers) as pool:
+            profits = pool.map(_one, jobs)
+    else:
+        profits = [_one(j) for j in jobs]
     return statistics.mean(profits), profits
 
 
@@ -262,14 +292,23 @@ def main():
     ap.add_argument("--rivals", type=int, default=3)
     ap.add_argument("--smart", type=int, default=0)
     ap.add_argument("--days", type=int, default=30)
+    ap.add_argument("--hard", action="store_true",
+                    help="8+ rivals: reputation campers, a hunter that undercuts us, a copycat, a price-war bot, "
+                         "plus 3 copies of our own strategy")
+    ap.add_argument("--workers", type=int, default=0, help="processes to use (default: 8 with --hard, else 1)")
     args = ap.parse_args()
     seeds = list(range(1001, 1001 + args.markets))
+    kinds = HARD_KINDS if args.hard else None
+    rivals = max(args.rivals, 8) if args.hard else args.rivals
+    smart = max(args.smart, 3) if args.hard else args.smart
+    workers = args.workers or (8 if args.hard else 1)
+    print("%d markets, %d house rivals + %d smart rivals%s" % (len(seeds), rivals, smart, " (HARD)" if args.hard else ""))
     t = time.time()
-    base, _ = evaluate(lambda s: Starter(), seeds, args.rivals, args.smart, args.days)
-    new, prof = evaluate(lambda s: S.Brain(seed=s), seeds, args.rivals, args.smart, args.days)
+    base, _ = evaluate("starter", seeds, rivals, smart, args.days, kinds, workers)
+    new, prof = evaluate("brain", seeds, rivals, smart, args.days, kinds, workers)
     print("starter bot: avg profit $%.0f" % base)
-    print("strategy:    avg profit $%.0f  (min $%.0f, max $%.0f)  [%.1fs]" % (
-        new, min(prof), max(prof), time.time() - t))
+    print("strategy:    avg profit $%.0f  (min $%.0f, max $%.0f, losing markets %d/%d)  [%.1fs]" % (
+        new, min(prof), max(prof), sum(1 for x in prof if x < 0), len(prof), time.time() - t))
 
 
 if __name__ == "__main__":
