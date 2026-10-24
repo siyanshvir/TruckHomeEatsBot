@@ -94,6 +94,8 @@ def replay_before(brain, states, target_day):
         next_day = forecast.get('day') or state.get('order_for_day')
         if next_day is not None and next_day > day:
             brain.pending = {'day': next_day, 'forecast': forecast}
+            if 'features' in state:
+                brain.pending['features'] = state['features']
 
 
 def frozen_history(root, target_day):

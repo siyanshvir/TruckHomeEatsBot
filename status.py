@@ -18,6 +18,8 @@ def main():
               (age, ' — stale; check the bot terminal' if age > 60 else ''))
         print('Market %s / %s; day %s; phase %s' %
               (health['mode'], health['market'], health['day'], health['phase']))
+        if 'features' in health:
+            print('Active rule flags:', health['features'])
     else:
         print('No connection status yet; restart the updated bot to begin recording it.')
     saved = read('runtime-v1.json')

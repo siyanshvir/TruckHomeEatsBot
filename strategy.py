@@ -8,11 +8,12 @@ import math
 import random
 import time
 from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
-                  customer_model, events, expected_sales, identity, reputation_value,
+                  customer_model, events, identity, reputation_value,
                   spot_results, weather_factor, weather_probs)
 from learning import Learner
 from opponents import OpponentModel, context
 from forecast_log import capture
+from mechanics import features, food_profit, demand_levels
 
 
 class Brain:
@@ -71,6 +72,13 @@ class Brain:
             own_reps[s] = before.get(me, {}).get(s, clamp(own_reps[s] - REP_CHANGE[own['quality']], 0, 100))
         before[me] = own_reps
         forecast = self.pending['forecast'] if self.pending and self.pending['day'] == last['day'] else None
+        # state.features can describe tomorrow after a toggle. Fit completed
+        # results only with their captured pre-order flags or explicit result flags.
+        realized_features = last.get('features')
+        if realized_features is None and self.pending and self.pending['day'] == last['day']:
+            realized_features = self.pending.get('features')
+        if realized_features is None and 'features' not in state:
+            realized_features = {}  # Legacy archives and fixtures before feature flags.
         prediction = (self.pending or {}).get('prediction') if forecast else None
         if prediction:
             order = prediction['order']
@@ -80,6 +88,7 @@ class Brain:
             check = {'mode': key[0], 'market': key[1], 'day': last['day'],
                      'forecast_id': prediction.get('forecast_id'),
                      'rules_digest': prediction.get('rules_digest'), 'regime_id': prediction.get('regime_id'),
+                     'features': prediction.get('features'),
                      'order': order, 'order_matches': matched,
                      'expected_sales': prediction['sales'], 'actual_sales': sold,
                      'expected_profit': prediction['profit'], 'actual_profit': own.get('profit'),
@@ -90,7 +99,8 @@ class Brain:
             check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
                                      else abs(sold-prediction['demand'])) if matched else None
             self.prediction_checks = (self.prediction_checks + [check])[-48:]
-        self.learner.learn(last, before, forecast, rules, strength=.7)
+        if realized_features is not None:
+            self.learner.learn(last, before, forecast, rules, strength=.7, features=realized_features)
         observed_context = context(forecast or {'events': last.get('events') or []})
         visited = {}
         records = {}
@@ -104,6 +114,7 @@ class Brain:
                     rec = {'spot': spot, 'price': float(truck['price']), 'quality': truck['quality'],
                            'meals': int(truck['meals']), 'sold': int(truck.get('sold', 0)),
                            'context': observed_context, 'day': last['day']}
+                    rec['features'] = features(realized_features) if realized_features is not None else None
                     records[name] = rec
         # Score each prediction before adding ANY of today's orders to history.
         # This prevents both future-data leakage and truck iteration-order effects.
@@ -211,23 +222,8 @@ class Brain:
         rep = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
         cost = rules.costs[quality]
         cap = rules.capacity(quality)
-        baseline = max(4, len(state.get('trucks') or []))
-        distributions = []
-        for placement, crowds, models, active in scenarios:
-            trucks = placement[spot] + [(price, quality, rep, float('inf'))]
-            # The API already publishes expected crowds, rather than a hypothetical
-            # full-roster population. Scaling those counts by participation again
-            # double-discounts inactive teams. Only synthesized/full-roster forecasts
-            # need a participation adjustment (our offline simulator marks its basis).
-            forecast = state.get('forecast') or {}
-            supplied = spot in (forecast.get('expected_customers') or {})
-            roster_basis = forecast.get('population_basis') == 'registered_trucks'
-            levels = ([1., 1., 1.] if supplied and not roster_basis else
-                      [max(4., active + contribution) / baseline for contribution in (0., .5, 1.)])
-            demands = {}
-            for scale in set(levels):
-                demands[scale] = expected_sales(trucks, crowds[spot] * scale, models[spot], rules.values)[-1]
-            distributions.append([demands[scale] for scale in levels])
+        flags = features(state.get('features'))
+        distributions = [demand_levels(state, rules, spot, quality, price, scenario) for scenario in scenarios]
         remaining = max(0, int(state.get('days', 30)) - int(state.get('order_for_day', 1)))
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
         best = None
@@ -242,8 +238,8 @@ class Brain:
             demand = [d[left] * (1-fraction) + d[left+1] * fraction for d in distributions]
             sales = [min(meals, x) for x in demand]
             mean = sum(sales) / n
-            profit = mean * price - meals * cost
-            loss = sum(max(0., meals * cost - x * price) for x in sales) / n
+            profit = food_profit(mean, meals, price, cost, flags['salvage'])
+            loss = sum(max(0., -food_profit(x, meals, price, cost, flags['salvage'])) for x in sales) / n
             # Small, bounded future benefit: no incentive to lose hundreds buying reputation.
             sale_probability = sum(x > .1 for x in sales) / n
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
@@ -255,6 +251,7 @@ class Brain:
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
                         'demand': sum(demand) / n,
                         'expected_unsold': meals - mean,
+                        'expected_salvage': (meals-mean)*cost*(.25 if flags['salvage'] else 0.),
                         'sellout_probability': sum(x >= meals for x in demand) / n if meals else 0.,
                         'order': {'spot': spot, 'quality': quality, 'price': price, 'meals': meals}}
             inventory_options.append(candidate)
@@ -303,18 +300,25 @@ class Brain:
     def decide(self, state):
         started = time.perf_counter()
         self.observe(state)
+        active_features = features(state.get('features'))
+        self.learner.activate(active_features)
         if state.get('order_for_day') is None:
             next_day = (state.get('forecast') or {}).get('day') or int(state.get('day', 0))+1
             state = dict(state, order_for_day=next_day)
         rules = Rules.read(state)
         counts = self.forecast(state, rules)
+        # Walking couples all campus crowds, but only eligible destinations can
+        # become our order. Avoid expensive candidate searches that policy forbids.
+        search_spots = rules.spots
+        if self.small_crowds and active_features['walk_over']:
+            search_spots = tuple(sorted(rules.spots, key=lambda s: (counts[s], s))[:3])
         digest = hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'))).encode()).digest()
         rng = random.Random(int.from_bytes(digest[:8], 'big'))
         self.scenario_rivals = []
         scenarios = self.scenarios(state, rules, counts, rng)
         results, coverage = [], {}
         by_pair = {}
-        for spot in rules.spots:
+        for spot in search_spots:
             rep = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
             coverage[spot] = []
             for quality in QUALITIES:
@@ -344,7 +348,7 @@ class Brain:
                     by_pair[spot, quality] = result
                     results.extend(candidates)
         # Same refinement allowance for each spot, after complete coarse coverage.
-        for spot in rules.spots:
+        for spot in search_spots:
             local = [r for (s, _), r in by_pair.items() if s == spot]
             if not local:
                 continue
@@ -366,7 +370,9 @@ class Brain:
         best = restriction['best']
         order = rules.validate(best['order'])
         self.pending = {'day': state.get('order_for_day'), 'forecast': state.get('forecast') or {},
+                        'features': active_features,
                         'prediction': {'order': dict(order), 'sales': best['sales'],
+                                       'features': active_features,
                                        'demand': best['demand'], 'profit': best['profit'],
                                        'rivals': sum(len(p[order['spot']]) for p, _, _, _ in scenarios)/len(scenarios)}}
         self.last_order = order
@@ -380,6 +386,7 @@ class Brain:
                             'candidates': len(results), 'ranking': sorted(ranked, key=lambda r: -r['score']),
                             'chosen': best, 'location_rule': {k: v for k, v in restriction.items() if k != 'best'},
                             'scenario_count': len(scenarios), 'prediction_checks': self.prediction_checks,
+                            'features': active_features,
                             'rivals': {identity(t): self.opponents.summary(identity(t),
                                 self.history.get(identity(t), []), state.get('forecast') or {},
                                 self.history, rules.spots) for t in state.get('trucks') or []

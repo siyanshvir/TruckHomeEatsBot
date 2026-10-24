@@ -1,0 +1,83 @@
+{
+  "features": [
+    "fair_choice",
+    "walk_over",
+    "salvage"
+  ],
+  "tests_passed": 94,
+  "official_practice": {
+    "source": "server-practice",
+    "days": 10,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "mechanics-official",
+        "rivals": 7,
+        "style": "house",
+        "profit": 3600.82,
+        "features": {
+          "fair_choice": true,
+          "walk_over": true,
+          "salvage": true
+        },
+        "waste": 51,
+        "zero_sale_days": 0,
+        "worst_day": 217.88,
+        "decision_max_seconds": 0.5334657920757309,
+        "decision_mean_seconds": 0.4576465207035653
+      }
+    ]
+  },
+  "offline_stress": {
+    "source": "approximate-offline",
+    "days": 3,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "mechanics-final",
+        "rivals": 12,
+        "style": "brutal",
+        "profit": 612.25,
+        "features": {
+          "fair_choice": true,
+          "walk_over": true,
+          "salvage": true
+        },
+        "waste": 66,
+        "zero_sale_days": 0,
+        "worst_day": -200.25,
+        "decision_max_seconds": 1.8377112919697538,
+        "decision_mean_seconds": 1.737674305642334
+      },
+      {
+        "policy": "learned",
+        "seed": "mechanics-final",
+        "rivals": 12,
+        "style": "moving",
+        "profit": 458.5625,
+        "features": {
+          "fair_choice": true,
+          "walk_over": true,
+          "salvage": true
+        },
+        "waste": 111,
+        "zero_sale_days": 0,
+        "worst_day": 92.75,
+        "decision_max_seconds": 1.787280875025317,
+        "decision_mean_seconds": 1.736355222334775
+      }
+    ]
+  },
+  "public_forecast_12_rival_timing_seconds": [
+    0.53,
+    0.605
+  ],
+  "limitations": [
+    "Fluid approximation of individual customer randomness and walking order.",
+    "Inventory caps uncapped demand; its cross-location stock feedback is approximated.",
+    "Walk-over local customer-preference fitting is withheld; crowd and rival learning remain active.",
+    "One official practice seed and short offline stress checks are not proof of live profit improvement.",
+    "Offline registered-truck population uses three scaling levels; its timings exceed corresponding one-level API forecasts."
+  ],
+  "rules_source": "https://nightshift.joinbuilders.org/kitchen-e551e5/"
+}

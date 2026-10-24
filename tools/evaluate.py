@@ -49,9 +49,9 @@ def request(client, method, path, body=None):
     raise RuntimeError('Practice request failed repeatedly')
 
 
-def run(name, seed, rivals, days, style, client=None):
+def run(name, seed, rivals, days, style, client=None, features=None):
     brain = policy(name)  # No shared mutable global, even between sequential markets.
-    market = None if client else Market(seed, rivals, days, style)
+    market = None if client else Market(seed, rivals, days, style, features=features)
     if client:
         created = request(client, 'POST', '/api/v1/practice', {'seed': seed, 'rivals': rivals, 'days': days})
         base = created['base']
@@ -76,6 +76,7 @@ def run(name, seed, rivals, days, style, client=None):
         zero += own['sold'] == 0 and own['meals'] > 0
     if state['phase'] != 'over': raise RuntimeError('Practice did not complete')
     return {'policy': name, 'seed': seed, 'rivals': rivals, 'style': style, 'profit': state['you']['cash'],
+            'features': state.get('features', {}),
             'waste': waste, 'zero_sale_days': zero, 'worst_day': min(profits),
             'decision_max_seconds': max(latencies), 'decision_mean_seconds': statistics.mean(latencies)}
 
@@ -88,8 +89,12 @@ def main():
     parser.add_argument('--days', type=int, default=30)
     parser.add_argument('--styles', nargs='+', default=['mixed', 'crowd', 'moving'])
     parser.add_argument('--policies', nargs='+', default=['cautious', 'untrained', 'learned'])
+    parser.add_argument('--features', nargs='*', choices=['fair_choice', 'walk_over', 'salvage'],
+                        default=[], help='Offline simulator flags; official practice uses server flags')
     parser.add_argument('--output', default='data/evaluation-v1.json')
     args = parser.parse_args()
+    if args.server and args.features:
+        parser.error('Official practice flags are controlled by the server; omit --features')
     client = None
     if args.server:
         load_env()
@@ -99,7 +104,8 @@ def main():
         for rivals in args.rivals:
             for style in (['house'] if client else args.styles):
                 for name in args.policies:
-                    result = run(name, seed, rivals, args.days, style, client)
+                    result = run(name, seed, rivals, args.days, style, client,
+                                 features={name: True for name in args.features})
                     results.append(result)
                     print(json.dumps(result), flush=True)
                     atomic_json(args.output, {'source': 'server-practice' if client else 'approximate-offline',

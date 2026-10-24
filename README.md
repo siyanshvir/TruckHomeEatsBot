@@ -35,9 +35,29 @@ can reduce achievable profit compared with unrestricted optimization.
 
 ## Decisions
 
-Each decision evaluates all six locations and all three qualities before any
-price refinement. Crowd size alone never determines location. Each spot receives
-equal search effort, without an early cutoff that can skip quieter spots.
+The bot reads `state.features` every update. With `fair_choice`, eligible trucks
+split customer flow by `exp(value / 1.5)`, redistributing when stock runs out.
+With `walk_over`, all local queues run first, then hungry customers may walk to
+the nearest acceptable stocked location with probability `0.7 * exp(-metres/400)`
+using the published campus distances. Original price limits and minimum quality
+are retained. These are expected fluid flows, not the server's individual draws.
+Inventory optimization caps projected uncapped demand; it approximates how our
+own stock changes other trucks' leftovers.
+
+With `salvage`, profit and downside include a refund of 25% of the ingredient
+cost of unsold meals. Full cooking cost still counts against the $500 budget.
+Flags enter rule fingerprints and separate customer-learning banks. Old
+checkpoints retain their legacy posterior; a new combination starts broad.
+While walking is enabled, crowd and rival learning continue, but local preference
+fitting is withheld to avoid fitting transferred buyers as locals. Captured order
+flags label realized results even if tomorrow's flags have already changed.
+
+With walking enabled, candidate searches cover all qualities at the three
+eligible locations; all six campus spots still contribute crowds and walking
+flows. Under legacy rules, all six locations are searched before refinement.
+Each searched spot receives equal effort. Active-night feature toggles trigger
+a replan; unchanged accepted orders are not resubmitted. Missing flags use legacy
+rules. Your location constraints and low price bounds are unchanged.
 
 The model learns a distribution over customer budget and minimum-quality
 preferences from observed sales across the market. Sequential customer-choice

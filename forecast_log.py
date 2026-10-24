@@ -4,7 +4,8 @@ import json
 import math
 from pathlib import Path
 import time
-from game import Rules, expected_sales, identity
+from game import Rules, identity
+from mechanics import features, food_profit, demand_levels
 
 
 def digest(value):
@@ -14,7 +15,7 @@ def digest(value):
 def source_digest():
     root = Path(__file__).resolve().parent
     files = ('bot.py', 'strategy.py', 'learning.py', 'opponents.py', 'game.py',
-             'pricing_models.py', 'forecast_log.py', 'history.py', 'vendor/pricewars_strategies.py')
+             'pricing_models.py', 'forecast_log.py', 'history.py', 'mechanics.py', 'vendor/pricewars_strategies.py')
     return digest({name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in files})
 
 
@@ -35,24 +36,20 @@ def capture(state, order, scenarios, named_rivals, model, diagnostics=None):
     """Snapshot the actual planning scenarios; never sample again for reporting."""
     rules = Rules.read(state)
     spot, quality, price, meals = (order[k] for k in ('spot', 'quality', 'price', 'meals'))
-    reputation = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
-    baseline = max(4, len(state.get('trucks') or []))
+    flags = features(state.get('features'))
     contribution = min(1., meals*rules.costs[quality]/250.)
     left = 0 if contribution <= .5 else 1
     fraction = contribution*2 if left == 0 else (contribution-.5)*2
     fc = state.get('forecast') or {}
-    use_api = spot in (fc.get('expected_customers') or {}) and fc.get('population_basis') != 'registered_trucks'
     rows = []
     for index, (placements, crowds, models, active) in enumerate(scenarios):
-        levels = [1., 1., 1.] if use_api else [max(4., active+x)/baseline for x in (0., .5, 1.)]
-        trucks = list(placements[spot]) + [(price, quality, reputation, float('inf'))]
-        demands = {scale: expected_sales(trucks, crowds[spot]*scale, models[spot], rules.values)[-1]
-                   for scale in set(levels)}
-        demand = demands[levels[left]]*(1-fraction) + demands[levels[left+1]]*fraction
+        demands = demand_levels(state, rules, spot, quality, price, (placements, crowds, models, active))
+        demand = demands[left]*(1-fraction) + demands[left+1]*fraction
         sales = min(meals, demand)
         rows.append({'placements': placements, 'crowds': crowds, 'customer_models': models,
                      'active': active, 'rival_offers': named_rivals[index] if index < len(named_rivals) else [],
-                     'demand': demand, 'sales': sales, 'profit': sales*price-meals*rules.costs[quality]})
+                     'demand': demand, 'sales': sales,
+                     'profit': food_profit(sales, meals, price, rules.costs[quality], flags['salvage'])})
     profits = [r['profit'] for r in rows]
     worst = sorted(profits)[:max(1, math.ceil(len(profits)*.2))]
     conditional = {}
@@ -75,12 +72,14 @@ def capture(state, order, scenarios, named_rivals, model, diagnostics=None):
                              'sampled_presence': len(present)/len(rows),
                              'present': summary(present), 'absent': summary(absent)}
     effective_rules = {'budget': rules.budget, 'costs': rules.costs, 'values': rules.values,
-                       'spots': list(rules.spots), 'price_min': rules.price_min, 'price_max': rules.price_max}
+                       'spots': list(rules.spots), 'price_min': rules.price_min, 'price_max': rules.price_max,
+                       'features': flags}
     rules_digest = digest(effective_rules)
     regime_id = digest([state.get('mode'), state.get('market'), rules_digest])
     record = {'schema_version': 2, 'generated_at': time.time(), 'source_digest': SOURCE_DIGEST,
               'mode': state.get('mode'), 'market': state.get('market'), 'day': state.get('order_for_day'),
               'api_version': state.get('version'), 'order': dict(order), 'input_forecast': fc,
+              'features': flags,
               'effective_rules': effective_rules, 'rules_digest': rules_digest, 'regime_id': regime_id,
               'public_reputations': {identity(t): t.get('reputation') for t in state.get('trucks') or []},
               'decision_diagnostics': diagnostics or {},

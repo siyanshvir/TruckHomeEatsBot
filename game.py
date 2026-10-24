@@ -139,8 +139,12 @@ def _customer_segments(trucks, model, value_items):
     return tuple(segments)
 
 
-def expected_sales(trucks, customers, model, values=VALUES):
+def expected_sales(trucks, customers, model, values=VALUES, fair_choice=False):
     """Sequential choice with finite stock; exact ties favor earlier trucks."""
+    if fair_choice:
+        return list(_local_flow(tuple(tuple(t) for t in trucks), max(0., float(customers)),
+                                (model[0], model[1], tuple(model[2])),
+                                tuple(sorted(values.items())), True)[0])
     mu, sd, mix = model
     segments = _customer_segments(tuple(tuple(t) for t in trucks),
                                   (mu, sd, tuple(mix)), tuple(sorted(values.items())))
@@ -162,5 +166,191 @@ def expected_sales(trucks, customers, model, values=VALUES):
             sold[i] += bought
         duration -= dt
         if duration <= 1e-8 or not any(rates):
+            break
+    return sold
+
+
+# Official campus distances in metres, symmetric. Walking is modeled as an
+# expected fluid flow; the live engine's individual random draws are not replayed.
+_DISTANCE_PAIRS = {
+    ('oval', 'thompson'): 130, ('oval', 'union'): 470, ('oval', 'stadium'): 590,
+    ('oval', 'highst'): 440, ('oval', 'northres'): 550,
+    ('thompson', 'union'): 520, ('thompson', 'stadium'): 490,
+    ('thompson', 'highst'): 580, ('thompson', 'northres'): 640,
+    ('union', 'stadium'): 990, ('union', 'highst'): 570, ('union', 'northres'): 910,
+    ('stadium', 'highst'): 980, ('stadium', 'northres'): 840,
+    ('highst', 'northres'): 410,
+}
+DISTANCES = {spot: {} for spot in SPOTS}
+for (_left, _right), _distance in _DISTANCE_PAIRS.items():
+    DISTANCES[_left][_right] = DISTANCES[_right][_left] = _distance
+
+
+WALK_DISTANCES = DISTANCES
+
+
+@lru_cache(maxsize=32768)
+def _scalar_budget_cdf(price, mu, sd):
+    return .5 * (1. + math.erf((price-mu) / (max(sd, .3)*math.sqrt(2.))))
+
+
+def _budget_cdf(price, model):
+    return _scalar_budget_cdf(price, model[0], model[1])
+
+
+@lru_cache(maxsize=4096)
+def _budget_cohorts(model, prices):
+    edges = (float('-inf'),) + tuple(sorted(set(prices))) + (float('inf'),)
+    return tuple((mass * (_budget_cdf(upper, model)-_budget_cdf(lower, model)), minimum, lower, upper)
+                 for minimum, mass in enumerate(model[2]) if mass > 0
+                 for lower, upper in zip(edges, edges[1:])
+                 if _budget_cdf(upper, model)-_budget_cdf(lower, model) > 1e-12)
+
+
+def _choices(trucks, minimum, budget, scores):
+    return tuple(i for i, truck in enumerate(trucks)
+                 if truck[3] > 0 and QUALITIES.index(truck[1]) >= minimum
+                 and truck[0] <= budget and scores[i] >= -1e-9)
+
+
+def _shares(eligible, remaining, scores, fair_choice):
+    available = [i for i in eligible if remaining[i] > 1e-8]
+    if not available:
+        return ()
+    if len(available) == 1:
+        return ((available[0], 1.),)
+    if not fair_choice:
+        best = max(available, key=lambda i: (scores[i], -i))
+        return ((best, 1.),)
+    top = max(scores[i] for i in available)
+    weighted = [(i, math.exp((scores[i]-top)/1.5)) for i in available]
+    total = sum(weight for _, weight in weighted)
+    return tuple((i, weight/total) for i, weight in weighted)
+
+
+@lru_cache(maxsize=8192)
+def _local_flow(trucks, customers, model, value_items, fair_choice):
+    values = dict(value_items)
+    cohorts = _budget_cohorts(model, tuple(t[0] for t in trucks))
+    scores = [reputation_value(q, r, values)-p for p, q, r, _ in trucks]
+    eligible = [_choices(trucks, minimum, lower, scores) for _, minimum, lower, _ in cohorts]
+    # Deterministic legacy ties additionally favor a lower selling price.
+    if not fair_choice:
+        eligible = [tuple(sorted(options, key=lambda i: (-scores[i], trucks[i][0], i))) for options in eligible]
+    remaining = [max(0., float(t[3])) for t in trucks]
+    sold, served = [0.]*len(trucks), [0.]*len(cohorts)
+    duration = 1.
+    for _ in range(len(trucks)+1):
+        rates, cohort_rates = [0.]*len(trucks), [0.]*len(cohorts)
+        for k, (mass, _, _, _) in enumerate(cohorts):
+            options = eligible[k]
+            if fair_choice:
+                shares = _shares(options, remaining, scores, True)
+            else:
+                first = next((i for i in options if remaining[i] > 1e-8), None)
+                shares = () if first is None else ((first, 1.),)
+            for i, weight in shares:
+                rate = mass*customers*weight
+                rates[i] += rate
+                cohort_rates[k] += rate
+        dt = min([duration]+[remaining[i]/rate for i, rate in enumerate(rates) if rate > 0 and remaining[i] > 1e-8])
+        for i, rate in enumerate(rates):
+            bought = min(remaining[i], rate*dt)
+            remaining[i] -= bought
+            sold[i] += bought
+        for k, rate in enumerate(cohort_rates):
+            served[k] += rate*dt
+        duration -= dt
+        if duration <= 1e-8 or not any(rates):
+            break
+    residual = tuple((max(0., mass*customers-served[k]), minimum, lower, upper)
+                     for k, (mass, minimum, lower, upper) in enumerate(cohorts)
+                     if mass*customers-served[k] > 1e-9)
+    return tuple(sold), residual
+
+
+def expected_market_sales(placements, crowds, models, values=VALUES, fair_choice=False, walk_over=False):
+    """Expected sales aligned with each spot's truck list.
+
+    First serve all original local crowds. If enabled, original hungry budget and
+    quality cohorts may walk once to their nearest acceptable other spot, with
+    probability .7*exp(-distance/400). Remaining inventory is shared across origins.
+    This fluid approximation preserves customers and stock, rather than resampling
+    a new budget/quality or counting a customer at multiple destinations.
+    """
+    spots = tuple(dict.fromkeys(tuple(placements)+tuple(crowds)))
+    if not walk_over:
+        return {spot: expected_sales(placements.get(spot, []), crowds.get(spot, 0.), models[spot],
+                                     values, fair_choice=fair_choice) for spot in spots}
+    items = tuple(sorted(values.items()))
+    sold, remaining, residual = {}, {}, {}
+    for spot in spots:
+        trucks = tuple(tuple(t) for t in placements.get(spot, []))
+        model = models[spot]
+        result, hungry = _local_flow(trucks, max(0., float(crowds.get(spot, 0.))),
+                                    (model[0], model[1], tuple(model[2])), items, fair_choice)
+        sold[spot] = list(result)
+        remaining[spot] = [max(0., float(t[3])-result[i]) for i, t in enumerate(trucks)]
+        residual[spot] = hungry
+    # Split residual budget intervals at all destination prices; this retains
+    # each origin's budget distribution after its own local selection.
+    all_prices = sorted({t[0] for spot in spots for t in placements.get(spot, [])})
+    cohorts = []
+    scores = {spot: [reputation_value(t[1], t[2], values)-t[0] for t in placements.get(spot, [])]
+              for spot in spots}
+    open_spots = tuple(spot for spot in spots if any(stock > 1e-8 for stock in remaining[spot]))
+    choices_cache = {}
+    for origin in spots:
+        model = models[origin]
+        for mass, minimum, lower, upper in residual[origin]:
+            edges = [lower]+[price for price in all_prices if lower < price < upper]+[upper]
+            denominator = _budget_cdf(upper, model)-_budget_cdf(lower, model)
+            for left, right in zip(edges, edges[1:]):
+                quantity = mass*(_budget_cdf(right, model)-_budget_cdf(left, model))/max(denominator, 1e-15)
+                if quantity < 1e-10:
+                    continue
+                destinations = []
+                for destination in open_spots:
+                    distance = DISTANCES.get(origin, {}).get(destination)
+                    if distance is None:
+                        continue
+                    key = (destination, minimum, left)
+                    options = choices_cache.get(key)
+                    if options is None:
+                        options = tuple(i for i in _choices(placements.get(destination, []), minimum, left, scores[destination])
+                                        if remaining[destination][i] > 1e-8)
+                        if not fair_choice:
+                            options = tuple(sorted(options, key=lambda i: (-scores[destination][i], placements[destination][i][0], i)))
+                        choices_cache[key] = options
+                    if options:
+                        destinations.append((distance, destination, options))
+                if destinations:
+                    cohorts.append((quantity, tuple(sorted(destinations))))
+    duration = 1.
+    for _ in range(sum(len(remaining[spot]) for spot in spots)+1):
+        rates = {spot: [0.]*len(remaining[spot]) for spot in spots}
+        for quantity, destinations in cohorts:
+            for distance, destination, eligible in destinations:
+                if fair_choice:
+                    shares = _shares(eligible, remaining[destination], scores[destination], True)
+                else:
+                    first = next((i for i in eligible if remaining[destination][i] > 1e-8), None)
+                    shares = () if first is None else ((first, 1.),)
+                if shares:
+                    flow = quantity*.7*math.exp(-distance/400.)
+                    for i, weight in shares:
+                        rates[destination][i] += flow*weight
+                    break
+        if not any(rate > 0 for local in rates.values() for rate in local):
+            break
+        dt = min([duration]+[remaining[spot][i]/rate for spot in spots for i, rate in enumerate(rates[spot])
+                             if rate > 0 and remaining[spot][i] > 1e-8])
+        for spot in spots:
+            for i, rate in enumerate(rates[spot]):
+                bought = min(remaining[spot][i], rate*dt)
+                remaining[spot][i] -= bought
+                sold[spot][i] += bought
+        duration -= dt
+        if duration <= 1e-8:
             break
     return sold

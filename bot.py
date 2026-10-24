@@ -11,6 +11,7 @@ from learning import Learner
 from strategy import Brain
 from history import warm_start
 from forecast_log import append_unique
+from mechanics import features
 
 ROOT = Path(__file__).resolve().parent
 
@@ -91,19 +92,24 @@ class Runner:
         self.client, self.brain = client, brain
         self.checkpoint, self.log = checkpoint, log
         self.accepted = None
+        self.accepted_features = None
         self.pending_key = self.pending_order = None
+        self.pending_features = None
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
                 self.brain.restore(saved['brain'])
                 self.accepted = saved['accepted']
+                self.accepted_features = saved.get('accepted_features')
             except (ValueError, KeyError, TypeError):
                 print('Checkpoint unreadable; starting from the trained model', flush=True)
 
     def save(self):
         if self.checkpoint:
             try:
-                atomic_json(self.checkpoint, {'accepted': self.accepted, 'brain': self.brain.dump()})
+                atomic_json(self.checkpoint, {'accepted': self.accepted,
+                                             'accepted_features': self.accepted_features,
+                                             'brain': self.brain.dump()})
             except OSError:
                 print('Checkpoint write failed', flush=True)
 
@@ -122,6 +128,7 @@ class Runner:
                             {'received_at': time.time(), 'mode': state.get('mode'),
                              'market': state.get('market'), 'day': state.get('day'),
                              'phase': state.get('phase'), 'order_for_day': state.get('order_for_day'),
+                             'features': features(state.get('features')),
                              'accepted': self.accepted, 'learned_day': getattr(self.brain, 'seen', None)})
             except OSError:
                 pass
@@ -191,7 +198,11 @@ class Runner:
                     self.save()
                     return state
                 key = [state.get('mode'), state.get('market'), state.get('order_for_day')]
-                if state.get('phase') != 'night' or not state.get('orders_open') or key == self.accepted:
+                active_features = features(state.get('features'))
+                same_features = (active_features == self.accepted_features or
+                                 self.accepted_features is None and not any(active_features.values()))
+                if (state.get('phase') != 'night' or not state.get('orders_open')
+                        or key == self.accepted and same_features):
                     last = state.get('last_day') or {}
                     if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
                             getattr(self.brain, 'seen', None) != last['day'] or
@@ -202,18 +213,20 @@ class Runner:
                     self.record_evaluation(state)
                     self.health(state)
                     continue
-                if key != self.pending_key:
+                if key != self.pending_key or active_features != self.pending_features:
                     try:
                         order = self.brain.decide(state)
                     except Exception as error:
                         print('Policy error (%s); using bounded fallback' % type(error).__name__, flush=True)
                         order = fallback(state)
                     self.pending_key, self.pending_order = key, order
+                    self.pending_features = active_features
                 order = self.pending_order
                 # Submission precedes logging/checkpoint disk I/O in the two-second window.
                 status, response = self.client.call('POST', base + '/orders', order, timeout=1.)
                 if status == 200:
                     self.accepted = key
+                    self.accepted_features = active_features
                     self.record(state, order)
                     self.save()
                     self.health(state)

@@ -28,6 +28,24 @@ class StubBrain:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_feature_toggle_replans_even_with_already_accepted_order(self):
+        class Client:
+            def __init__(self): self.posts = 0
+            def call(self, method, path, body=None, **kwargs):
+                if method == 'GET':
+                    if self.posts >= 2: raise Stop()
+                    st = state('live')
+                    st['features'] = {'fair_choice': self.posts > 0}
+                    return 200, st
+                self.posts += 1
+                return 200, {}
+        client, brain = Client(), StubBrain()
+        runner = Runner(client, brain)
+        with self.assertRaises(Stop): runner.play()
+        self.assertEqual(client.posts, 2)
+        self.assertEqual(brain.calls, 2)
+        self.assertTrue(runner.accepted_features['fair_choice'])
+
     def test_idle_state_records_health_without_submitting(self):
         class Client:
             def __init__(self): self.calls = 0

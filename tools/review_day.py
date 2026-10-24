@@ -74,12 +74,41 @@ def review_day(root, day=None, mode='live', market=1):
     meals, sold = int(own.get('meals', 0)), float(own.get('sold', 0))
     unit_cost = rules.costs[quality]
     revenue, cost = sold * price, meals * unit_cost
+    # Read the realized day's flags first. Current result-state flags may already
+    # describe tomorrow's engine, so never use them for historical accounting.
+    if isinstance(last.get('features'), dict):
+        features, feature_source = last['features'], 'last_day.features'
+    elif isinstance(((decision or {}).get('state') or {}).get('features'), dict):
+        features, feature_source = decision['state']['features'], 'accepted decision state.features'
+    else:
+        features, feature_source = {}, 'legacy default (no captured flags)'
+    flag = features.get('salvage', False)
+    enabled = bool(flag.get('enabled', False)) if isinstance(flag, dict) else bool(flag)
+    unsold = max(0., meals-sold)
+    gross_waste_cost = unsold * unit_cost
+    if own.get('salvage') is not None:
+        salvage, salvage_source = float(own['salvage']), 'actual last_day.you.salvage'
+    else:
+        salvage, salvage_source = (.25 * gross_waste_cost if enabled else 0.), 'derived from captured flags'
+    # Positive realized salvage establishes eligibility even without flags.
+    salvage_rate = .25 if enabled or salvage > 0 else 0.
+    profit = revenue-cost+salvage
+    reported_profit = own.get('profit')
+    break_even_margin = price - salvage_rate * unit_cost
+    break_even = (max(0, math.ceil((cost*(1-salvage_rate)-1e-9)/break_even_margin))
+                  if break_even_margin > 0 else (0 if cost == 0 else None))
     report['actual'] = {'spot': own.get('spot'), 'quality': quality, 'price': price,
                         'meals': meals, 'sold': sold, 'revenue': revenue, 'ingredient_cost': cost,
-                        'profit': revenue-cost, 'reported_profit': own.get('profit'),
-                        'unsold': max(0., meals-sold), 'unsold_ingredient_cost': max(0., meals-sold)*unit_cost,
+                        'profit': profit, 'reported_profit': reported_profit,
+                        'profit_difference_from_reported': profit-float(reported_profit) if reported_profit is not None else None,
+                        'salvage': salvage, 'salvage_source': salvage_source,
+                        'salvage_feature_source': feature_source,
+                        'salvage_enabled_for_hypothetical_inventory': bool(salvage_rate),
+                        'unsold': unsold, 'unsold_ingredient_cost': gross_waste_cost,
+                        'unsold_ingredient_gross_cost': gross_waste_cost,
+                        'unsold_ingredient_net_cost': gross_waste_cost-salvage,
                         'sales_contribution': sold*(price-unit_cost),
-                        'break_even_sales': math.ceil((cost-1e-9)/price) if price > 0 else None}
+                        'break_even_sales': break_even}
     if not decision:
         report['warnings'].append('No frozen accepted decision; forecast and pre-day reputation comparisons unavailable.')
         return report
@@ -91,13 +120,15 @@ def review_day(root, day=None, mode='live', market=1):
     report['prediction'] = {k: chosen.get(k) for k in
                             ('sales', 'profit', 'demand', 'expected_unsold', 'sellout_probability', 'loss')}
     report['prediction']['sales_error_actual_minus_expected'] = sold-chosen['sales'] if matches and 'sales' in chosen else None
-    report['prediction']['profit_error_actual_minus_expected'] = revenue-cost-chosen['profit'] if matches and 'profit' in chosen else None
+    report['prediction']['profit_error_actual_minus_expected'] = profit-chosen['profit'] if matches and 'profit' in chosen else None
     base = chosen.get('base_meals')
     if matches and base is not None and 0 <= base <= meals:
         base_sold = min(sold, base)
+        base_salvage = salvage_rate * max(0., base-base_sold) * unit_cost
         report['inventory_cushion'] = {'base_meals': base, 'extra_meals': meals-base,
                                       'extra_ingredient_cost': (meals-base)*unit_cost,
-                                      'fixed_observed_sales_base_profit': base_sold*price-base*unit_cost,
+                                      'fixed_observed_sales_base_salvage': base_salvage,
+                                      'fixed_observed_sales_base_profit': base_sold*price-base*unit_cost+base_salvage,
                                       'method': 'hypothetical cap: sales=min(actual_sold,base_meals); not a causal demand forecast'}
     me = identity(state.get('you') or {})
     roster = {identity(t): t for t in state.get('trucks') or []}

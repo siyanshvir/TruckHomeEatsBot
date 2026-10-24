@@ -102,6 +102,68 @@ class DayReviewTests(unittest.TestCase):
         self.assertIsNone(report['prediction']['profit_error_actual_minus_expected'])
         self.assertNotIn('inventory_cushion', report)
 
+    def test_actual_salvage_payout_is_authoritative_and_profit_comparison_includes_it(self):
+        decision, result = fixtures()
+        result['last_day']['you'].update(salvage=94.875, profit=-248.925)
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, [decision], [result])
+            report = review_day(root)
+        actual = report['actual']
+        self.assertAlmostEqual(actual['profit'], -248.925)
+        self.assertAlmostEqual(actual['profit_difference_from_reported'], 0.)
+        self.assertEqual(actual['unsold_ingredient_gross_cost'], 379.5)
+        self.assertAlmostEqual(actual['unsold_ingredient_net_cost'], 284.625)
+        self.assertEqual(actual['break_even_sales'], 54)
+        self.assertAlmostEqual(report['inventory_cushion']['fixed_observed_sales_base_salvage'], 92.125)
+        self.assertAlmostEqual(report['inventory_cushion']['fixed_observed_sales_base_profit'], -240.675)
+        self.assertAlmostEqual(report['prediction']['profit_error_actual_minus_expected'], -391.655)
+
+    def test_realized_flags_override_captured_flags_and_ignore_future_result_flags(self):
+        decision, result = fixtures()
+        decision['state']['features'] = {'salvage': True}
+        result['last_day']['features'] = {'salvage': False}
+        result['features'] = {'salvage': True}
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, [decision], [result])
+            report = review_day(root)
+        self.assertEqual(report['actual']['salvage'], 0.)
+        self.assertEqual(report['actual']['salvage_feature_source'], 'last_day.features')
+        self.assertAlmostEqual(report['actual']['profit'], -343.8)
+        self.assertEqual(report['inventory_cushion']['fixed_observed_sales_base_salvage'], 0.)
+
+    def test_captured_flags_allow_derived_salvage_when_payout_missing(self):
+        decision, result = fixtures()
+        decision['state']['features'] = {'salvage': {'enabled': True}}
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, [decision], [result])
+            report = review_day(root)
+        self.assertEqual(report['actual']['salvage'], 94.875)
+        self.assertEqual(report['actual']['salvage_feature_source'], 'accepted decision state.features')
+        self.assertAlmostEqual(report['actual']['profit_difference_from_reported'], 94.875)
+
+    def test_actual_zero_salvage_overrides_enabled_flag_for_actual_accounting(self):
+        decision, result = fixtures()
+        result['last_day']['features'] = {'salvage': True}
+        result['last_day']['you']['salvage'] = 0
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, [decision], [result])
+            report = review_day(root)
+        self.assertEqual(report['actual']['salvage'], 0.)
+        self.assertAlmostEqual(report['actual']['profit'], -343.8)
+        self.assertEqual(report['actual']['unsold_ingredient_net_cost'], 379.5)
+        self.assertEqual(report['inventory_cushion']['fixed_observed_sales_base_salvage'], 92.125)
+
+    def test_missing_flags_zero_payout_keeps_legacy_accounting(self):
+        decision, result = fixtures()
+        result['features'] = {'salvage': True}
+        result['last_day']['you']['salvage'] = 0
+        with tempfile.TemporaryDirectory() as root:
+            self.write(root, [decision], [result])
+            report = review_day(root)
+        self.assertAlmostEqual(report['actual']['profit'], -343.8)
+        self.assertFalse(report['actual']['salvage_enabled_for_hypothetical_inventory'])
+        self.assertEqual(report['inventory_cushion']['fixed_observed_sales_base_salvage'], 0.)
+
     def test_malformed_records_do_not_prevent_review(self):
         decision, result = fixtures()
         with tempfile.TemporaryDirectory() as root:

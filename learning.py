@@ -1,4 +1,5 @@
 """Online Bayesian model averaging, shared by training and the playing policy."""
+import copy
 import json
 import math
 from pathlib import Path
@@ -10,34 +11,101 @@ PARTICLES = [(mu, sd, taste) for mu in (-3., -1.5, 0., 1.5, 3.)
              for sd in (.65, 1., 1.4) for taste in (-.12, 0., .12)]
 
 
+FEATURE_NAMES = ('fair_choice', 'walk_over', 'salvage')
+
+
+def feature_tuple(features):
+    """Canonical realized engine flags; never read tomorrow's forecast."""
+    if features is None:
+        return (False, False, False)
+    if isinstance(features, (tuple, list)) and len(features) == len(FEATURE_NAMES):
+        return tuple(bool(flag) for flag in features)
+    if not isinstance(features, dict):
+        raise ValueError('Expected feature flags as a mapping or three-element sequence')
+    def enabled(value):
+        return bool(value.get('enabled', False)) if isinstance(value, dict) else bool(value)
+    return tuple(enabled(features.get(name, False)) for name in FEATURE_NAMES)
+
+
 class Learner:
     VERSION = 1
 
     def __init__(self):
-        self.weights = {s: [0.] * len(PARTICLES) for s in SPOTS}
-        self.counts = {s: 0 for s in SPOTS}
-        self.crowd = {s: {} for s in SPOTS}
-        self.crowd_variance = {s: {} for s in SPOTS}
-        self.rows = 0
+        self.active_features = (False, False, False)
+        self.regimes = {}
+        self._bind(self._fresh_bank())
+        self.regimes[self._regime_key(self.active_features)] = self._current_bank()
+
+    @staticmethod
+    def _fresh_bank():
+        return {'weights': {s: [0.] * len(PARTICLES) for s in SPOTS},
+                'counts': {s: 0 for s in SPOTS}, 'crowd': {s: {} for s in SPOTS},
+                'crowd_variance': {s: {} for s in SPOTS}, 'rows': 0}
+
+    @staticmethod
+    def _regime_key(features):
+        return ''.join('1' if flag else '0' for flag in features)
+
+    def _current_bank(self):
+        return {name: getattr(self, name) for name in
+                ('weights', 'counts', 'crowd', 'crowd_variance', 'rows')}
+
+    def _bind(self, bank):
+        for name, value in bank.items():
+            setattr(self, name, value)
+
+    def activate(self, features):
+        """Select a rules-specific posterior, retaining all other feature regimes.
+
+        New engine behavior starts with the broad customer prior, rather than
+        transferring likelihoods fitted under different customer-choice rules.
+        Rival history lives outside Learner and is unaffected.
+        """
+        flags = feature_tuple(features)
+        if flags == self.active_features:
+            return False
+        self.regimes[self._regime_key(self.active_features)] = self._current_bank()
+        key = self._regime_key(flags)
+        if key not in self.regimes:
+            self.regimes[key] = self._fresh_bank()
+        self._bind(self.regimes[key])
+        self.active_features = flags
+        return True
 
     def to_dict(self):
-        return {'version': self.VERSION, 'weights': self.weights, 'counts': self.counts,
-                'crowd': self.crowd, 'crowd_variance': self.crowd_variance, 'rows': self.rows}
+        # Detach serialized snapshots from both live state and other banks.
+        banks = dict(self.regimes)
+        banks[self._regime_key(self.active_features)] = self._current_bank()
+        snapshot = copy.deepcopy(self._current_bank())
+        snapshot.update(version=self.VERSION, active_features=list(self.active_features),
+                        regimes=copy.deepcopy(banks))
+        return snapshot
 
     @classmethod
     def from_dict(cls, data):
-        obj = cls()
         if data.get('version') != cls.VERSION:
             raise ValueError('Unsupported learned-model version')
-        for spot in SPOTS:
-            weights = data['weights'][spot]
-            if len(weights) != len(PARTICLES) or not all(math.isfinite(x) for x in weights):
-                raise ValueError('Invalid learned weights')
-        obj.weights = data['weights']
-        obj.counts = data['counts']
-        obj.crowd = data['crowd']
-        obj.crowd_variance = data.get('crowd_variance', {s: {} for s in SPOTS})
-        obj.rows = data.get('rows', 0)
+        def read_bank(raw):
+            bank = cls._fresh_bank()
+            bank.update({name: copy.deepcopy(raw[name]) for name in bank if name in raw})
+            for spot in SPOTS:
+                weights = bank['weights'][spot]
+                if len(weights) != len(PARTICLES) or not all(math.isfinite(x) for x in weights):
+                    raise ValueError('Invalid learned weights')
+            return bank
+        obj = cls()
+        flags = feature_tuple(data.get('active_features'))
+        obj.regimes = {}
+        for key, raw in (data.get('regimes') or {}).items():
+            if len(key) != 3 or any(char not in '01' for char in key):
+                raise ValueError('Invalid learning regime key')
+            obj.regimes[key] = read_bank(raw)
+        # The existing version-1 fields remain authoritative for the active bank.
+        # Older files have no regime metadata and are therefore legacy (000).
+        active = cls._regime_key(flags)
+        obj.regimes[active] = read_bank(data)
+        obj._bind(obj.regimes[active])
+        obj.active_features = flags
         return obj
 
     @classmethod
@@ -57,7 +125,10 @@ class Learner:
     def confidence(self, spot):
         return self.counts[spot] / (self.counts[spot] + 20.)
 
-    def learn(self, last, before_reps=None, forecast=None, rules=None, strength=1.):
+    def learn(self, last, before_reps=None, forecast=None, rules=None, strength=1., features=None):
+        if features is not None:
+            self.activate(features)
+        fair_choice, walk_over, _ = self.active_features
         rules = rules or Rules.read({})
         before_reps = before_reps or {}
         kinds = events(last.get('events'))
@@ -73,10 +144,16 @@ class Learner:
                        float(before_reps.get(identity(t), {}).get(spot, 50)), int(t['meals']))
                       for t in records if t.get('quality') in QUALITIES]
             records = [t for t in records if t.get('quality') in QUALITIES]
-            if customers and trucks:
+            # Walk-over changes local arrivals after the origin crowd is drawn.
+            # Until a joint customer-flow likelihood exists, avoid falsely fitting
+            # those transferred sales as local preferences. Origin crowd residuals
+            # below remain usable and segregated in this feature regime.
+            if customers and trucks and not walk_over:
                 losses = []
                 for particle in PARTICLES:
-                    predictions = expected_sales(trucks, customers, customer_model(spot, kinds, particle), rules.values)
+                    predictions = expected_sales(trucks, customers, customer_model(spot, kinds, particle),
+                                                 rules.values, fair_choice=True) if fair_choice else expected_sales(
+                        trucks, customers, customer_model(spot, kinds, particle), rules.values)
                     loss = 0.
                     for predicted, t in zip(predictions, records):
                         actual = float(t.get('sold', 0))
@@ -138,5 +215,6 @@ def train(rows):
     learner = Learner()
     for row in rows:
         reps = {identity(t): t.get('rep') or t.get('reputation') or {} for t in row['pre'].get('trucks', [])}
-        learner.learn(row['last_day'], reps, row['pre'].get('forecast'))
+        learner.learn(row['last_day'], reps, row['pre'].get('forecast'),
+                      features=row['pre'].get('features') or {})
     return learner

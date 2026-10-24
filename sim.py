@@ -5,7 +5,8 @@ Use server practice to validate; offline profit is only a regression/stress sign
 """
 import math
 import random
-from game import SPOTS, QUALITIES, COSTS, VALUES, REP_CHANGE, Rules
+from game import SPOTS, QUALITIES, COSTS, VALUES, REP_CHANGE, Rules, WALK_DISTANCES
+from learning import feature_tuple, FEATURE_NAMES
 
 # Separate truth parameters rather than the learner's fitted distributions.
 TRUTH = {'highst': (12, 4, (.52, .33, .15), .24), 'oval': (13, 3, (.38, .42, .20), .20),
@@ -14,8 +15,9 @@ TRUTH = {'highst': (12, 4, (.52, .33, .15), .24), 'oval': (13, 3, (.38, .42, .20
 
 
 class Market:
-    def __init__(self, seed, rivals=5, days=30, style='mixed'):
+    def __init__(self, seed, rivals=5, days=30, style='mixed', features=None):
         self.seed, self.days, self.style = seed, days, style
+        self.features = dict(zip(FEATURE_NAMES, feature_tuple(features)))
         self.names = ['us'] + ['r%d' % i for i in range(rivals)]
         self.reps = {name: dict.fromkeys(SPOTS, 50.) for name in self.names}
         self.cash = dict.fromkeys(self.names, 0.)
@@ -56,7 +58,7 @@ class Market:
     def state(self):
         return {'version': self.day, 'mode': 'practice', 'market': str(self.seed), 'days': self.days,
                 'day': self.day-1, 'order_for_day': self.day, 'phase': 'night' if self.day <= self.days else 'over',
-                'orders_open': self.day <= self.days,
+                'orders_open': self.day <= self.days, 'features': dict(self.features),
                 'forecast': self.schedule[min(self.day-1, self.days-1)][0],
                 'rules': {'budget': 500, 'costs': COSTS, 'values': VALUES, 'spots': list(SPOTS), 'price_min': 1, 'price_max': 30},
                 'you': {'id': 'us', 'cash': self.cash['us'], 'reputation': dict(self.reps['us'])},
@@ -125,6 +127,8 @@ class Market:
         return {'spot': spots, 'quality': 'premium', 'price': round(rng.uniform(9, 10.5), 2), 'meals': 90}
 
     def play(self, own_order):
+        if any(self.features.values()):
+            return self._play_features(own_order)
         rules = Rules.read(self.state())
         rules.validate(own_order)
         orders = self.rival_orders()
@@ -161,6 +165,95 @@ class Market:
                         self.reps[name][spot] = max(0, min(100, self.reps[name][spot]+REP_CHANGE[o['quality']]))
                 else:
                     self.reps[name][spot] += .03*(50-self.reps[name][spot])
-        self.last = {'day': self.day, 'weather': weather, 'events': forecast['events'], 'spots': spots, 'you': own}
+        self.last = {'day': self.day, 'weather': weather, 'events': forecast['events'],
+                     'features': dict(self.features), 'spots': spots, 'you': own}
+        self.day += 1
+        return self.state()
+
+
+    def _play_features(self, own_order):
+        """Individual customer truth, independently implemented from the planner."""
+        rules = Rules.read(self.state())
+        rules.validate(own_order)
+        orders = self.rival_orders()
+        orders['us'] = own_order
+        forecast, weather, customers = self.schedule[self.day-1]
+        effective = max(4., sum(min(1., o['meals']*COSTS[o['quality']]/250) for o in orders.values()))
+        scale = effective/max(4, len(self.names))
+        crowds = {s: customers[s][:round(len(customers[s])*scale)] for s in SPOTS}
+        here = {s: {n: o for n, o in orders.items() if o['spot'] == s} for s in SPOTS}
+        sold = dict.fromkeys(orders, 0)
+        hungry = dict.fromkeys(SPOTS, 0)
+        walked_in = dict.fromkeys(SPOTS, 0)
+        walked_out = dict.fromkeys(SPOTS, 0)
+        remaining = []
+        rng = random.Random('%s/%s/customer-features' % (self.seed, self.day))
+
+        def eligible(spot, budget, minimum):
+            offers = []
+            for name, order in here[spot].items():
+                utility = VALUES[order['quality']]*(.7+.006*self.reps[name][spot])-order['price']
+                if (QUALITIES.index(order['quality']) >= minimum and order['price'] <= budget
+                        and sold[name] < order['meals'] and utility >= 0):
+                    offers.append((utility, -order['price'], name))
+            return offers
+
+        def choose(offers):
+            if self.features['fair_choice']:
+                maximum = max(o[0] for o in offers)
+                weights = [math.exp((o[0]-maximum)/1.5) for o in offers]
+                return rng.choices(offers, weights=weights, k=1)[0][2]
+            return max(offers)[2]
+
+        # Finish every local queue before any overflow customer considers walking.
+        for spot in SPOTS:
+            for budget, minimum in crowds[spot]:
+                offers = eligible(spot, budget, minimum)
+                if offers:
+                    sold[choose(offers)] += 1
+                else:
+                    hungry[spot] += 1
+                    remaining.append((spot, budget, minimum))
+        if self.features['walk_over']:
+            for origin, budget, minimum in remaining:
+                destinations = [(WALK_DISTANCES[origin][destination], destination)
+                                for destination in SPOTS if destination != origin
+                                and eligible(destination, budget, minimum)]
+                if not destinations:
+                    continue
+                distance, destination = min(destinations)
+                if rng.random() >= .7*math.exp(-distance/400.):
+                    continue
+                # Reuse the same budget/quality requirement; one attempt, one sale.
+                offers = eligible(destination, budget, minimum)
+                sold[choose(offers)] += 1
+                hungry[origin] -= 1
+                walked_out[origin] += 1
+                walked_in[destination] += 1
+        spots, own = {}, None
+        for spot in SPOTS:
+            records = []
+            for name, order in here[spot].items():
+                spoiled = order['meals']-sold[name]
+                salvage = .25*COSTS[order['quality']]*spoiled if self.features['salvage'] else 0.
+                profit = sold[name]*order['price']-order['meals']*COSTS[order['quality']]+salvage
+                self.cash[name] += profit
+                records.append(dict(order, id=name, sold=sold[name], salvage=salvage))
+                if name == 'us':
+                    own = dict(order, sold=sold[name], profit=profit, spoiled=spoiled,
+                               revenue=sold[name]*order['price'],
+                               cost=order['meals']*COSTS[order['quality']], salvage=salvage)
+            spots[spot] = {'customers': len(crowds[spot]), 'hungry': hungry[spot],
+                           'walked_in': walked_in[spot], 'walked_out': walked_out[spot],
+                           'trucks': records}
+        for name, order in orders.items():
+            for spot in SPOTS:
+                if spot == order['spot']:
+                    if sold[name]:
+                        self.reps[name][spot] = max(0, min(100, self.reps[name][spot]+REP_CHANGE[order['quality']]))
+                else:
+                    self.reps[name][spot] += .03*(50-self.reps[name][spot])
+        self.last = {'day': self.day, 'weather': weather, 'events': forecast['events'],
+                     'features': dict(self.features), 'spots': spots, 'you': own}
         self.day += 1
         return self.state()

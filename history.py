@@ -24,5 +24,7 @@ def warm_start(brain, root):
         # are closed and order_for_day is null. Preserve it for the next result.
         if next_day is not None and next_day > day:
             brain.pending = {'day': next_day, 'forecast': forecast}
+            if 'features' in state:
+                brain.pending['features'] = state['features']
         loaded += 1
     return loaded
