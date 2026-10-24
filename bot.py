@@ -1,20 +1,21 @@
-"""Food Truck Wars starter bot. Python 3.8+, standard library only.
+"""Food Truck Wars bot (T.H.E Truck). Python 3.8+, standard library only.
 
     export NIGHTSHIFT_KEY=fk_your_key_here
     python3 bot.py              # play the live game (leave it running)
     python3 bot.py --practice   # play a private practice market and print your profit
 
-It works, but it plays badly. Rewrite decide() below.
+The key is read from NIGHTSHIFT_KEY or from a .env file next to this script.
+decide() picks tomorrow's order by simulating how customers choose between trucks.
 """
 import argparse
 import json
 import os
-import random
 import sys
 import time
 import urllib.error
 import urllib.request
 from statistics import NormalDist
+
 
 def load_env(path=".env"):
     """Load KEY=value lines from a .env file next to this script. Real environment variables win."""
@@ -244,7 +245,7 @@ def play(base):
     while True:
         try:
             status, state = call("GET", base + "/state?since=%d" % version)
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, ValueError) as e:
             print("network error (%s), retrying in %ds" % (e, backoff))
             time.sleep(backoff)
             backoff = min(backoff * 2, 30)
@@ -270,7 +271,7 @@ def play(base):
             order = decide(state)
             try:
                 status, res = call("POST", base + "/orders", order)
-            except (urllib.error.URLError, OSError) as e:
+            except (urllib.error.URLError, OSError, ValueError) as e:
                 print("  network error sending order (%s), retrying" % (e,))
                 time.sleep(1)
                 continue
