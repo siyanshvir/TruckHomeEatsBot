@@ -92,6 +92,25 @@ class CrewModel:
         refill = min(.97, self.pool_accepting(wage, int(labor.get('unemployed', 0))) / trucks)
         return retained + (1. - retained) * refill
 
+    def search_space(self, state, current_wage, needed):
+        """Headcounts and wages to consider, from the rules and what the market shows (no fixed ceiling).
+
+        Wages run from the game's minimum to a dollar above the highest wage anyone pays (or the pool
+        would ask), plus our own; headcounts run from what the order needs up to four spares. The
+        expected-cost model decides inside this space, so spare staff and a higher wage are chosen only
+        when the learned quit/poach risk pays for them."""
+        rules = ((state.get('rules') or {}).get('staff')) or {}
+        low = float(rules.get('wage_min', WAGE_MIN))
+        cap = float(rules.get('wage_max', WAGE_MAX))
+        seen = [float(t['wage']) for t in state.get('trucks') or [] if isinstance(t.get('wage'), (int, float))]
+        spread = max(.3, (self.pool.get('median', 5.5) - self.pool.get('lowest', 4.5)) / 1.9) if self.pool else 1.
+        pool_high = self.pool.get('median', 0.) + 3 * spread if self.pool else 0.
+        high = min(cap, max([current_wage, low + 2.] + seen + [pool_high]) + 1.)
+        grid = {round(low + .5 * i, 2) for i in range(int((high - low) / .5) + 1)} | {round(current_wage, 2)}
+        grid |= {round(round(w * 2) / 2, 2) for w in seen if low <= w <= cap}
+        staff_max = int(rules.get('staff_max') or 10)
+        return range(needed, min(staff_max, needed + 4) + 1), sorted(w for w in grid if low <= w <= cap)
+
     def plan(self, state, order, sales, me):
         """Best (headcount, wage) for the accepted order, given scenario sales."""
         self.see_labor(state)
@@ -99,6 +118,7 @@ class CrewModel:
         current_h, current_w = int(crew.get('target', 4)), float(crew.get('wage', 6))
         meals = int(order['meals'])
         needed = max(1, math.ceil(meals / PER_EMPLOYEE))
+        headcounts, wages = self.search_space(state, current_w, needed)
         margin = float(order['price']) * .98
         sales = sales or [meals * .8]
 
@@ -110,8 +130,8 @@ class CrewModel:
                        for k, q in enumerate(pmf))
             return -wages - lost, p, pmf
         best = None
-        for headcount in range(needed, min(10, needed + 2) + 1):
-            for wage in [WAGE_MIN + .5*i for i in range(0, 16)]:
+        for headcount in headcounts:
+            for wage in wages:
                 score, p, pmf = value(headcount, wage)
                 if best is None or score > best[0]:
                     best = (score, headcount, wage, p, pmf)

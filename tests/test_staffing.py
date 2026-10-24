@@ -153,3 +153,40 @@ class PhantomTests(unittest.TestCase):
         data = brain.dump(); data.pop('phantom')
         legacy = Brain(samples=4); legacy.restore(data)
         self.assertIn('events', legacy.phantom)
+
+
+class DataDrivenCrewSearchTests(unittest.TestCase):
+    def test_wage_range_follows_what_the_market_pays_not_a_fixed_ceiling(self):
+        model = CrewModel(); model.observe(state(), 'me')
+        _, wages = model.search_space(state(rivals=((11., 3), (10., 4))), 6., 2)
+        self.assertGreaterEqual(max(wages), 12.)     # a dollar above the best wage anyone pays
+        self.assertEqual(min(wages), 5.)
+        _, rich = model.search_space(state(rivals=((20., 3),)), 6., 2)
+        self.assertGreaterEqual(max(rich), 21.)      # no hand-set $12.50 ceiling
+        _, quiet = model.search_space(state(rivals=()), 6., 2)
+        self.assertLess(max(quiet), max(rich))
+
+    def test_spare_headcount_is_chosen_only_when_learned_risk_pays_for_it(self):
+        def market():
+            s = state(rivals=((11., 3), (10., 4)))
+            s['labor'] = {'unemployed': 0, 'lowest_asking_wage': 9., 'median_asking_wage': 10.}  # nobody to refill with
+            return s
+        calm, risky = CrewModel(), CrewModel()
+        for model in (calm, risky):
+            model.observe(market(), 'me')
+        calm.poach = {'events': .1, 'exposures': 100.}
+        risky.poach = {'events': 9., 'exposures': 10.}   # rivals really do poach us
+        order = {'price': 10., 'meals': 90}
+        low = calm.plan(market(), order, [88]*8, 'me')
+        high = risky.plan(market(), order, [88]*8, 'me')
+        # Learned poaching risk is answered with spare staff or, more cheaply, a wage that removes the exposure.
+        self.assertTrue(high['wage'] > low['wage'] or high['headcount'] > low['headcount'])
+        self.assertEqual(high['rivals_exposed'], 0) if high['wage'] > low['wage'] else None
+        self.assertLessEqual(high['headcount'], 2 + 4)
+
+    def test_rules_bound_the_search(self):
+        s = state(); s['rules'] = {'staff': {'wage_min': 5, 'wage_max': 9, 'staff_max': 3}}
+        model = CrewModel(); model.observe(s, 'me')
+        heads, wages = model.search_space(s, 6., 2)
+        self.assertLessEqual(max(heads), 3)
+        self.assertLessEqual(max(wages), 9)
