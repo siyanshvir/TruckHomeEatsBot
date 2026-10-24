@@ -7,11 +7,11 @@ import hashlib
 import math
 import random
 import time
-from collections import defaultdict
 from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
                   customer_model, events, expected_sales, identity, reputation_value,
                   spot_results, weather_factor, weather_probs)
 from learning import Learner
+from opponents import OpponentModel, context
 
 
 class Brain:
@@ -25,14 +25,16 @@ class Brain:
         self.pending = None
         self.last_order = None
         self.diagnostics = {}
+        self.opponents = OpponentModel()
 
     def dump(self):
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
-                'pending': self.pending, 'last_order': self.last_order}
+                'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
+        self.opponents = OpponentModel(data.get('opponents'))
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
             setattr(self, key, data[key])
 
@@ -45,7 +47,7 @@ class Brain:
             self.pending = None
             self.last_order = None
         last = state.get('last_day') or {}
-        if last.get('day') is None or self.seen == last['day']:
+        if last.get('day') is None or (self.seen is not None and last['day'] <= self.seen):
             return
         me = identity(state.get('you') or {})
         rules = Rules.read(state)
@@ -63,19 +65,29 @@ class Brain:
         observed_counts = {s: float(info.get('customers', 0)) for s, info in spot_results(last).items()}
         ranked_counts = (forecast or {}).get('expected_customers') or observed_counts
         busiest = max(ranked_counts.values(), default=0)
+        observed_context = context(forecast or {'events': last.get('events') or []})
         visited = {}
+        records = {}
         for spot, info in spot_results(last).items():
             if spot not in SPOTS:
                 continue
             for truck in info.get('trucks') or []:
                 name = identity(truck)
                 visited[name] = (spot, truck)
-                if name != me and truck.get('quality') in QUALITIES:
+                if truck.get('quality') in QUALITIES:
                     rec = {'spot': spot, 'price': float(truck['price']), 'quality': truck['quality'],
                            'meals': int(truck['meals']), 'sold': int(truck.get('sold', 0)),
-                           'followed_crowd': bool(busiest and ranked_counts.get(spot, 0) >= .95*busiest)}
-                    self.history.setdefault(name, []).append(rec)
-                    self.history[name] = self.history[name][-24:]
+                           'context': observed_context, 'day': last['day']}
+                    records[name] = rec
+        # Score each prediction before adding ANY of today's orders to history.
+        # This prevents both future-data leakage and truck iteration-order effects.
+        roster = {identity(t) for t in state.get('trucks') or []} | set(records)
+        for name in sorted(roster - {me}):
+            self.opponents.observe(name, records.get(name), self.history.get(name, []),
+                                   forecast, self.history, rules.spots)
+        for name, rec in records.items():
+            self.history.setdefault(name, []).append(rec)
+            self.history[name] = self.history[name][-48:]
         for name in set(self.reputations) | set(visited):
             reps = self.reputations.setdefault(name, {s: 50. for s in SPOTS})
             for spot in SPOTS:
@@ -132,30 +144,16 @@ class Brain:
             active = 0.
             for name in roster:
                 hist = self.history.get(name, [])
-                frequency = defaultdict(float)
-                for age, rec in enumerate(reversed(hist[-12:])):
-                    frequency[rec['spot']] += .8 ** age
-                total = sum(frequency.values()) or 1.
-                crowd_total = sum(counts.values()) or 1.
-                # Learn whether a rival responds to today's forecast rather than
-                # assuming yesterday's destination is still attractive after an event.
-                following = (1. + sum(r.get('followed_crowd', False) for r in hist)) / (4. + len(hist))
-                responsive = .1 + .7*following
-                maximum = max(counts.values(), default=0)
-                attraction = {s: (counts[s] / max(1., maximum)) ** (1.+8.*following) for s in rules.spots}
-                attraction_total = sum(attraction.values()) or 1.
-                habit = 1. - responsive - .15
-                weights = [.15 / len(rules.spots) + responsive * attraction[s] / attraction_total
-                           + habit * .65 * frequency[s] / total
-                           + (habit*.35 if hist and hist[-1]['spot'] == s else 0.) for s in rules.spots]
+                if rng.random() > self.opponents.attendance(name):
+                    continue
+                weights = self.opponents.placement(name, hist, fc, self.history, rules.spots)
                 spot = rng.choices(rules.spots, weights=weights, k=1)[0]
                 if hist:
-                    rec = hist[-1] if rng.random() < .6 else rng.choice(hist[-6:])
-                    q = rec['quality']
-                    recent_prices = [x['price'] for x in hist[-6:] if x['quality'] == q]
-                    spread = max(.12, min(1.5, (max(recent_prices) - min(recent_prices)) / 2)) if recent_prices else .8
-                    price = rec['price'] + rng.gauss(0, spread)
-                    meals = max(0, min(rules.capacity(q), int(rec['meals'] * rng.uniform(.85, 1.15))))
+                    quality_weights = self.opponents.quality(hist, fc)
+                    q = rng.choices(QUALITIES, weights=quality_weights, k=1)[0]
+                    mean, spread, stock = self.opponents.pricing(name, hist, fc, self.history, q, spot)
+                    price = rng.gauss(mean, spread)
+                    meals = max(0, min(rules.capacity(q), int(stock * rng.uniform(.85, 1.15))))
                 else:
                     rec = rng.choice(field) if field else None
                     q = rec['quality'] if rec else rng.choice(QUALITIES)
@@ -280,5 +278,8 @@ class Brain:
                 ranked.append({**r, 'forecast': counts[spot]})
         self.diagnostics = {'elapsed': time.perf_counter()-started, 'coverage': coverage,
                             'candidates': len(results), 'ranking': sorted(ranked, key=lambda r: -r['score']),
-                            'chosen': best}
+                            'chosen': best, 'rivals': {identity(t): self.opponents.summary(identity(t),
+                                self.history.get(identity(t), []), state.get('forecast') or {},
+                                self.history, rules.spots) for t in state.get('trucks') or []
+                                if identity(t) != identity(state.get('you') or {})}}
         return order
