@@ -28,7 +28,8 @@ PHANTOM_PRIOR, PHANTOM_LIMITS = (.64, 8.), (.03, .30)
 
 
 class Brain:
-    def __init__(self, learner=None, seed=42, samples=12, risk=.15, price_cap=None, quiet_bonus=0., small_crowds=False, spot_price_lift=None):
+    def __init__(self, learner=None, seed=42, samples=12, risk=.15, price_cap=None, quiet_bonus=0., small_crowds=False, spot_price_lift=None,
+                 target_spot=None):
         self.learner = learner or Learner()
         self.seed, self.samples, self.risk = seed, max(4, int(samples)), float(risk)
         # Optional steering: never charge above price_cap; reward spots where rivals rarely park.
@@ -39,6 +40,8 @@ class Brain:
         self.final_policy, self.final_active, self._baseline = None, False, None
         # Per-spot multiplier on the low price ceilings, e.g. {'thompson': 1.10}.
         self.spot_price_lift = dict(spot_price_lift or {})
+        # Always park here when set (and the spot exists); quality, price, meals and crew are still optimized.
+        self.target_spot = target_spot
         self.low_price_caps = {'cheap': 5.50, 'standard': 7.00, 'premium': 8.50}
         self.market = None
         self.seen = None
@@ -532,6 +535,9 @@ class Brain:
         search_spots = rules.spots
         if self.small_crowds and active_features['walk_over']:
             search_spots = tuple(sorted(rules.spots, key=lambda s: (counts[s], s))[:3])
+        target = self.target_spot in rules.spots
+        if target:
+            search_spots = (self.target_spot,)
         digest = hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'))).encode()).digest()
         rng = random.Random(int.from_bytes(digest[:8], 'big'))
         self.scenario_rivals = []
@@ -589,7 +595,8 @@ class Brain:
                     results.append(self.evaluate(state, rules, spot, quality, price, scenarios))
         if not results:
             raise ValueError('No legal candidates for supplied rules')
-        restriction = self.location_restriction(results, counts, rules.spots)
+        restriction = ({'best': max(results, key=lambda r: r['score']), 'enabled': False, 'target': self.target_spot}
+                       if target else self.location_restriction(results, counts, rules.spots))
         best = restriction['best']
         order = rules.validate(best['order'])
         self.pending = {'day': state.get('order_for_day'), 'forecast': state.get('forecast') or {},
