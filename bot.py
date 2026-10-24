@@ -15,6 +15,26 @@ import time
 import urllib.error
 import urllib.request
 
+def load_env(path=".env"):
+    """Load KEY=value lines from a .env file next to this script. Real environment variables win."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                name, _, value = line.partition("=")
+                value = value.strip().strip("'\"")
+                if value != "fk_your_key_here":
+                    os.environ.setdefault(name.strip(), value)
+    except OSError:
+        pass
+
+
+load_env()
 URL = os.environ.get("NIGHTSHIFT_URL", "https://nightshift.joinbuilders.org").rstrip("/")
 KEY = os.environ.get("NIGHTSHIFT_KEY", "")
 
