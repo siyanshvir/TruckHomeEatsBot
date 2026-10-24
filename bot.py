@@ -1,4 +1,4 @@
-"""Food Truck Wars starter bot. Python 3.8+, standard library only.
+"""Food Truck Wars bot (T.H.E Truck). Python 3.8+, standard library only.
 
     export NIGHTSHIFT_KEY=fk_your_key_here
     python3 bot.py              # play the live game (leave it running)
@@ -9,11 +9,12 @@ The strategy lives in strategy.py (see its docstring); sim.py is an offline simu
 import argparse
 import json
 import os
-import random
 import sys
 import time
 import urllib.error
 import urllib.request
+from statistics import NormalDist
+
 
 from strategy import BUDGET, COST, QUALITIES, Brain
 
@@ -164,6 +165,20 @@ def play(base):
             else:
                 print("  order rejected (%d): %s" % (status, res.get("error")))
                 time.sleep(1)
+
+
+def log_state(state):
+    """Append the latest day to data/live.jsonl so rivals' behaviour can be studied later."""
+    if state.get("mode") == "practice" or not state.get("last_day"):
+        return
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open("data/live.jsonl", "a") as f:
+            f.write(json.dumps({"mode": state.get("mode"), "market": state.get("market"),
+                                "last_day": state["last_day"],
+                                "trucks": [{"id": t["id"], "rep": t.get("reputation")} for t in state["trucks"]]}) + "\n")
+    except OSError:
+        pass
 
 
 def report(state):
