@@ -26,10 +26,10 @@ simulator, reputation resets each market), two private official practice markets
 | # | Claim | Evidence | Could be wrong if | Verdict |
 |---|---|---|---|---|
 | T1 | Expected profit is driven mainly by rival occupancy; choose the spot with the fewest likely rivals and stay when reputation is high | live: $277/$62/-$29 by trucks at spot; rivals' homes 63–87% | selection effects (good spots attract trucks) | Supported |
-| T2 | A learned price-response correction beats a fixed model | sweep: calibration off −$499 (se 228), waste +226 meals; live day 28 predicted 84, sold 53 | calibration chases noise on few days | Supported |
-| T3 | The adaptive profile beats the baseline | sweep: +$3,107 (se 566) over 14 paired markets; practice 30 days, 7 rivals: $10,108 vs $8,465 | simulator not the official engine; house-bot rivals | Supported, with the simulator caveat |
+| T2 | A learned price-response correction beats a fixed model | sweep: calibration off −$437 (se 229, about 1.9 se), waste 620 vs 386 meals; live day 28 predicted 84, sold 53 | calibration chases noise on few days | Supported |
+| T3 | The adaptive profile beats the baseline | sweep: +$3,160 (se 588) over 14 paired markets, 0 of 14 wins for the baseline; practice 30 days, 7 rivals: $10,108 vs $8,465 | simulator not the official engine; house-bot rivals | Supported, with the simulator caveat |
 | T4 | Risk weight and price headroom barely matter for mean profit | sweep: risk .03/.30 and price ±10% all within ~1 se of default (−$11 to −$33) | effect appears only in other rival mixes | Supported (no action) |
-| T5 | Wide location breadth hurts | breadth 1.0 −$280 (se 118, about 2.4 se); breadth 0 −$19 | one test, small sample | Weak |
+| T5 | Wide location breadth hurts | breadth 1.0 −$253 (se 117, about 2.2 se); breadth 0 −$18 | one test, small sample | Weak |
 | T6 | Risk-seeking when behind lowers mean profit | posture on vs off, 18 paired markets: −$140 (se about 69), 6 wins 6 losses; worst in brutal 7-rival markets (−$600, −$806) | small sample | Weak but sufficient to keep it off in the final |
 | T7 | Orders should be sized to learned demand, not to a crew or last-day sales | crew cap locked us at 50 meals; literature: censored-demand newsvendor | demand estimates are noisy | Supported (cap removed) |
 | T8 | A reactive "cook leaner after losing days" rule is noise-chasing | literature (recency bias); rival bot uses it | losing streaks signal a real change | Rejected |
@@ -37,7 +37,7 @@ simulator, reputation resets each market), two private official practice markets
 ## 3. Decision memo (for approval; nothing is changed yet)
 Keep for the final:
 1. The adaptive final profile as built (calibrator on, competition model on, all spots searched, bounded tuner).
-2. The calibrator: removing it lost the most after the baseline gap.
+2. The calibrator: removing it lost about $437 and wasted far more food (moderate evidence, about 1.9 se).
 3. Posture neutral in the final (already the default); mild in the live game only.
 4. The crew model with no hard crew cap and data-driven wage and headcount ranges.
 Proposed small changes (each cheap, each reversible, each needing approval):
@@ -45,6 +45,8 @@ Proposed small changes (each cheap, each reversible, each needing approval):
 - **B. Initialize the final's first market with a reputation-aware price check**: at reputation near 50 the planner must price from value (already done by the calibrator ratio); add a practice test of day 1–10 pricing before the final.
 - **C. Use the full-history critical fractile for meal counts** (Kaplan-Meier style) as an offline experiment first; adopt only if it wins on matched seeds.
 Rejected: Wagyu-style low-price roaming, last-day throttling, expecting tacit collusion, risk-seeking in the final.
+
+Also from R3: the all-spots search without the calibrator and tuner (`unrestricted`) earned $7,385 and its worst market was $842 against $4,872; final decisions average about 1.0 s against 0.67 s for the baseline offline. The tuner's learning gain was not measured (fixed knobs); a controller-on arm and about 10 seeds for breadth and calibrator are the next experiment.
 
 ## 4. Limits
 One live market (31 days), small per-pair samples, simulator not the official engine, rival profit estimated.
