@@ -66,6 +66,16 @@ def customer_model(spot, kinds, particle):
     return mu + shift, sd * spread, (mix[0] - move, mix[1], mix[2] + move)
 
 
+def without_null_counts(state):
+    """The API can send null for a spot's expected customers. Treat that as missing, not zero."""
+    forecast = state.get('forecast') or {}
+    counts = forecast.get('expected_customers') or {}
+    if all(v is not None for v in counts.values()):
+        return state
+    known = {spot: v for spot, v in counts.items() if v is not None}
+    return dict(state, forecast=dict(forecast, expected_customers=known))
+
+
 def weather_probs(forecast):
     raw = forecast.get('weather') or {'clear': 1.}
     if isinstance(raw, str):

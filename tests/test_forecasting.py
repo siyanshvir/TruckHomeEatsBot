@@ -27,6 +27,16 @@ class ForecastingTests(unittest.TestCase):
         synthetic = brain.evaluate(state, Rules.read(state), 'stadium', 'premium', 8.5, scenarios)
         self.assertLess(synthetic['order']['meals'], 20)
 
+    def test_null_forecast_count_is_treated_as_missing(self):
+        from bot import fallback
+        state = Market('null-count', rivals=3, days=3).state()
+        state['order_for_day'] = 2
+        state['forecast']['expected_customers']['stadium'] = None
+        order = Brain(samples=4, small_crowds=True).decide(state)
+        Rules.read(state).validate(order)
+        Rules.read(state).validate(fallback(state))
+        self.assertIsNone(state['forecast']['expected_customers']['stadium'])
+
     def test_daytime_history_replay_retains_next_forecast(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)/'data'/'live-observations'

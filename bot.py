@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import urllib.error
 import urllib.request
-from game import Rules, SPOTS
+from game import Rules, SPOTS, without_null_counts
 from learning import Learner
 from strategy import Brain
 from history import warm_start
@@ -73,6 +73,7 @@ def make_brain(model=None, samples=32, small_crowds=True):
 
 def fallback(state):
     """Bound loss if policy fails: assess all spots using forecast less rival stock."""
+    state = without_null_counts(state)
     rules = Rules.read(state)
     forecast = (state.get('forecast') or {}).get('expected_customers') or {}
     last = (state.get('last_day') or {}).get('spots') or {}

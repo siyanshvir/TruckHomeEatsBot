@@ -9,7 +9,7 @@ import random
 import time
 from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
                   customer_model, events, identity, reputation_value,
-                  spot_results, weather_factor, weather_probs)
+                  spot_results, weather_factor, weather_probs, without_null_counts)
 from learning import Learner
 from opponents import OpponentModel, context
 from forecast_log import capture
@@ -299,6 +299,7 @@ class Brain:
 
     def decide(self, state):
         started = time.perf_counter()
+        state = without_null_counts(state)
         self.observe(state)
         active_features = features(state.get('features'))
         self.learner.activate(active_features)
