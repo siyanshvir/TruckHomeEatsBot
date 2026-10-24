@@ -7,7 +7,7 @@ that our own order must obey. No future or private orders are used.
 """
 import math
 from pricing_models import reference_prices
-from game import SPOTS, QUALITIES, COSTS, VALUES, clamp, events, weather_probs
+from game import SPOTS, known_spots, QUALITIES, COSTS, VALUES, clamp, events, weather_probs
 
 LOCATION_MODELS = ('uniform', 'habit', 'repeat', 'crowd', 'context', 'opportunity', 'follow')
 PRICE_MODELS = ('context', 'repeat', 'undercut', 'cycle', 'follow')
@@ -30,14 +30,16 @@ def context(forecast):
     forecast = forecast or {}
     counts = forecast.get('expected_customers') or {}
     total = sum(float(v) for v in counts.values()) or 1.
+    spots = SPOTS + tuple(s for s in known_spots()[len(SPOTS):] if s in counts)
     return {'events': events(forecast.get('events')), 'weather': weather_probs(forecast),
-            'shares': {s: float(counts.get(s, 0))/total for s in SPOTS}}
+            'shares': {s: float(counts.get(s, 0))/total for s in spots}}
 
 
 def similarity(left, right):
     le, re = set(left.get('events', [])), set(right.get('events', []))
     event_distance = len(le ^ re)
-    crowd_distance = sum(abs(left.get('shares', {}).get(s, 0)-right.get('shares', {}).get(s, 0)) for s in SPOTS)
+    extra = sorted((set(left.get('shares', {})) | set(right.get('shares', {}))) - set(SPOTS))
+    crowd_distance = sum(abs(left.get('shares', {}).get(s, 0)-right.get('shares', {}).get(s, 0)) for s in SPOTS + tuple(extra))
     weather_distance = sum(abs(left.get('weather', {}).get(w, 0)-right.get('weather', {}).get(w, 0))
                            for w in ('clear', 'cloudy', 'rain', 'cold'))
     return math.exp(-1.5*event_distance-2.*crowd_distance-.5*weather_distance)
@@ -161,7 +163,7 @@ class OpponentModel:
         e['active' if record else 'absent'] += 1.
         if record is None:
             return
-        if forecast and (forecast.get('expected_customers') or {}):
+        if forecast and (forecast.get('expected_customers') or {}) and record['spot'] in spots:
             experts = self.location_experts(name, history, forecast, histories, spots)
             probabilities = self.placement(name, history, forecast, histories, spots)
             index = spots.index(record['spot'])

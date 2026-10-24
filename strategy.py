@@ -7,7 +7,8 @@ import hashlib
 import math
 import random
 import time
-from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
+import game
+from game import (SPOTS, known_spots, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
                   customer_model, events, identity, reputation_value,
                   spot_results, weather_factor, weather_probs, without_null_counts)
 from learning import Learner
@@ -111,7 +112,23 @@ class Brain:
         low, high = PHANTOM_LIMITS
         return min(high, max(low, self.phantom['events'] / self.phantom['exposures']))
 
+    @staticmethod
+    def register_new_spots(state):
+        """Teach game.py about open spots beyond the original six; any failure leaves them ignored."""
+        try:
+            spots = (state.get('rules') or {}).get('spots') or ()
+            extra = [s for s in spots if isinstance(s, str) and s not in SPOTS]
+            if not extra:
+                return
+            from rules_adapter import RuleAdapter
+            normal = RuleAdapter().normalize(state)
+            priors = {s: p for s, p in (normal.get('spot_priors') or {}).items() if s in extra}
+            game.register_spots(priors, normal.get('spot_distances') or {})
+        except Exception:
+            pass
+
     def observe(self, state):
+        self.register_new_spots(state)
         key = [state.get('mode'), state.get('market')]
         if key != self.market:
             if self.final_policy is not None:
@@ -180,7 +197,7 @@ class Brain:
         visited = {}
         records = {}
         for spot, info in spot_results(last).items():
-            if spot not in SPOTS:
+            if spot not in known_spots():
                 continue
             for truck in info.get('trucks') or []:
                 name = identity(truck)
@@ -203,7 +220,8 @@ class Brain:
             self.history[name] = self.history[name][-48:]
         for name in set(self.reputations) | set(visited):
             reps = self.reputations.setdefault(name, {s: 50. for s in SPOTS})
-            for spot in SPOTS:
+            for spot in known_spots():
+                reps.setdefault(spot, 50.)
                 if name in visited and visited[name][0] == spot:
                     t = visited[name][1]
                     if t.get('sold', 0) > 0:
@@ -432,6 +450,7 @@ class Brain:
     def decide(self, state):
         started = time.perf_counter()
         state = without_null_counts(state)
+        self.register_new_spots(state)
         self.observe(state)
         active_features = features(state.get('features'))
         self.learner.activate(active_features)
