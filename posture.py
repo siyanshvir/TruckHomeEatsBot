@@ -53,6 +53,16 @@ def read(state, history, me):
     trust = min(1., span / float(WINDOW))                    # fewer days, less weight
     scale = max(abs(best), abs(ours), FLOOR)
     pressure = trust * max(0., min(1., (best - ours) / scale))
+    if state.get('mode') not in ('final', 'showcase'):
+        # One shared market to the end (the live game): to overtake the cash leader we must out-earn
+        # their pace by gap / days_left. In the final each market is scored on its own average profit,
+        # so only the pace comparison above applies there.
+        cash = history.get(max(d for d in history if d <= day), {})
+        leader = max((t for t in cash if t != me), key=lambda t: cash[t], default=None)
+        left = int(state.get('days') or 0) - day
+        if leader and left > 0 and cash.get(me) is not None and cash[leader] > cash[me]:
+            needed = rates.get(leader, 0.) + (cash[leader] - cash[me]) / left
+            pressure = max(pressure, trust * max(0., min(1., (needed - ours) / max(needed, FLOOR))))
     lead = trust * max(0., min(1., (ours - best) / scale))
     return {'pressure': pressure, 'lead': lead,
             'risk_scale': max(.4, 1. - .6 * pressure + .5 * lead),

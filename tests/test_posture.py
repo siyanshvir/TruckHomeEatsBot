@@ -87,3 +87,16 @@ class PostureTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CatchUpTests(unittest.TestCase):
+    def test_a_big_cash_gap_with_few_days_left_raises_pressure_in_the_live_game_only(self):
+        hist = history(300, [300, 280], days=8)
+        for d in hist:                       # a rival is far ahead in cash but earns the same pace
+            hist[d]['r0'] += 4000
+        live = {'day': 8, 'days': 36, 'mode': 'live'}
+        final = {'day': 8, 'days': 36, 'mode': 'final'}
+        self.assertGreater(read(live, hist, 'me')['pressure'], read(final, hist, 'me')['pressure'])
+        self.assertLessEqual(read(live, hist, 'me')['risk_scale'], 1.)
+        self.assertEqual(read({'day': 8, 'days': 8, 'mode': 'live'}, hist, 'me')['pressure'],
+                         read(final, hist, 'me')['pressure'])   # no days left: nothing to catch up
