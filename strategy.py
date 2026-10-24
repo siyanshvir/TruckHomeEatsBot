@@ -15,6 +15,7 @@ from opponents import OpponentModel, context
 from forecast_log import capture
 from mechanics import features, demand_levels
 from overheads import Overheads
+from riots import riot_cost
 from staffing import CrewModel
 
 # Documented surprise rates; building spots can have a fire drill (open ones today).
@@ -303,6 +304,7 @@ class Brain:
         if overheads.capacity is not None:
             cap = min(cap, overheads.capacity)  # each employee serves 50 meals a day
         charged = overheads.charged(price)
+        riots = riot_cost(state, spot)  # score only: expected riot damage near tomorrow's game
         distributions = [demand_levels(state, rules, spot, quality, charged, scenario) for scenario in scenarios]
         remaining = max(0, int(state.get('days', 30)) - int(state.get('order_for_day', 1)))
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
@@ -325,7 +327,7 @@ class Brain:
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
             future = clamp(future, -25., 25.)
             exploration = 3. * min(1., remaining / 15.) * (1-self.learner.confidence(spot)) * sale_probability
-            score = profit - self.risk * loss + future + exploration
+            score = profit - self.risk * loss + future + exploration - riots
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
