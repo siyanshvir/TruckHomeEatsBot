@@ -50,15 +50,24 @@ class OverheadTests(unittest.TestCase):
         self.assertEqual(oh.profit(60, 60, 8.5, 'premium', 5.5), 180 + 30)
         self.assertEqual(oh.profit(60, 60, 4.0, 'cheap', 2.5), 60*4 - 150 - 30)
 
-    def test_vote_only_when_clearly_helpful(self):
-        order = {'spot': 'oval', 'quality': 'premium', 'price': 8.5, 'meals': 80}
-        state = {'politics': {'election': {'id': 'e1', 'candidates': [
-            {'id': 'c1', 'policies': [{'key': 'luxury_tax', 'text': 'Luxury tax: ...'}]},
-            {'id': 'c2', 'policies': [{'key': 'junk_tax', 'text': 'Junk food tax: ...'}]},
-            {'id': 'c3', 'policies': [{'key': 'price_cap', 'text': 'Price cap: ...'}]}]}}}
-        self.assertEqual(choose_vote(state, order), 'c2')
+    def test_vote_follows_win_odds_and_protest_cost(self):
+        from politics import vote_analysis
+        order = {'spot': 'thompson', 'quality': 'premium', 'price': 10.25, 'meals': 90}
+        flat = {'key': 'flat_fee', 'text': 'Flat fee: ...', 'params': {'revenue_share': .1, 'above': 500, 'flat': -20}}
+        curfew = {'key': 'curfew', 'text': 'North campus curfew: ...'}
+        quiet = {'key': 'quiet_core', 'text': 'Quiet core: ...'}
+        state = {'days': 65, 'you': {'id': 'me', 'cash': 100}, 'trucks': [{'id': t, 'cash': 500} for t in ('me', 'a', 'b', 'c')],
+                 'politics': {'election': {'id': 'e1', 'vote_day': 27, 'tally': {'c1': 1, 'c3': 1},
+                              'votes': {'a': 'c1', 'b': 'c3'}, 'candidates': [
+            {'id': 'c1', 'policies': [flat, curfew]}, {'id': 'c3', 'policies': [flat, quiet]}]}}}
+        rows = {r['id']: r for r in vote_analysis(state, order)['rows']}
+        self.assertGreater(rows['c1']['p_win_vote'], rows['c1']['p_win_abstain'])
+        self.assertGreater(rows['c1']['daily_value'], 0)
+        self.assertLess(rows['c3']['daily_value'], 0)
+        self.assertEqual(choose_vote(state, order), 'c1')
         self.assertIsNone(choose_vote(state, dict(order, meals=10)))
         self.assertIsNone(choose_vote(state, None))
+        self.assertIsNone(choose_vote({'politics': {}}, order))
 
     def test_unknown_spot_does_not_break_planning(self):
         state = with_rules()
@@ -84,11 +93,16 @@ class VoteRunnerTests(unittest.TestCase):
             def call(self, method, path, body=None, timeout=30):
                 self.posts.append((path, body)); return 200, {}
         class StubBrain:
-            last_order = {'spot': 'oval', 'quality': 'premium', 'price': 8.5, 'meals': 80}
+            last_order = {'spot': 'thompson', 'quality': 'premium', 'price': 10.25, 'meals': 90}
         client = Client()
         runner = Runner(client, StubBrain())
-        state = {'mode': 'live', 'market': 1, 'you': {}, 'politics': {'election': {'id': 'e1', 'candidates': [
-            {'id': 'c2', 'policies': [{'key': 'junk_tax', 'text': 'Junk food tax: ...'}]}]}}}
+        flat = {'key': 'flat_fee', 'text': 'Flat fee: ...', 'params': {'revenue_share': .1, 'above': 500, 'flat': -20}}
+        state = {'mode': 'live', 'market': 1, 'days': 65, 'you': {'id': 'me', 'cash': 100},
+                 'trucks': [{'id': t, 'cash': 500} for t in ('me', 'a', 'b', 'c')],
+                 'politics': {'election': {'id': 'e1', 'vote_day': 27, 'tally': {'c2': 1, 'c3': 1},
+                              'votes': {'a': 'c2', 'b': 'c3'}, 'candidates': [
+            {'id': 'c2', 'policies': [flat, {'key': 'curfew', 'text': 'North campus curfew: ...'}]},
+            {'id': 'c3', 'policies': [flat, {'key': 'quiet_core', 'text': 'Quiet core: ...'}]}]}}}
         runner.vote(state, '/api/v1')
         runner.vote(state, '/api/v1')
         self.assertEqual(client.posts, [('/api/v1/vote', {'candidate': 'c2'})])

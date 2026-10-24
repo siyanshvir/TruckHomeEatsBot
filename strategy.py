@@ -20,6 +20,8 @@ from staffing import CrewModel
 # Documented surprise rates; building spots can have a fire drill (open ones today).
 BUILDINGS = ('thompson', 'union', 'northres')
 FIRE_DRILL_CHANCE, GIVEAWAY_CHANCE = .06, .10
+# Chance an unforeseen rival shows up at a spot: events and weight of a weak prior, then clamped.
+PHANTOM_PRIOR, PHANTOM_LIMITS = (.64, 8.), (.03, .30)
 
 
 class Brain:
@@ -41,6 +43,7 @@ class Brain:
         self.diagnostics = {}
         self.opponents = OpponentModel()
         self.crew = CrewModel()
+        self.phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
         self.prediction_checks = []
         self.forecast_record = None
         self.scenario_rivals = []
@@ -49,15 +52,30 @@ class Brain:
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
-                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict()}
+                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
         self.opponents = OpponentModel(data.get('opponents'))
         self.prediction_checks = data.get('prediction_checks', [])
         self.crew = CrewModel(data.get('crew'))
+        self.phantom = data.get('phantom') or self.bootstrap_phantom(self.prediction_checks)
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
             setattr(self, key, data[key])
+
+    @staticmethod
+    def bootstrap_phantom(checks):
+        """Older checkpoints: learn the rate from the saved prediction checks."""
+        phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
+        for check in checks:
+            if check.get('order_matches') and not check.get('surprise'):
+                phantom['exposures'] += 1
+                phantom['events'] += min(1., max(0., check['actual_rivals'] - check['expected_rivals']))
+        return phantom
+
+    def phantom_rate(self):
+        low, high = PHANTOM_LIMITS
+        return min(high, max(low, self.phantom['events'] / self.phantom['exposures']))
 
     def observe(self, state):
         key = [state.get('mode'), state.get('market')]
@@ -113,6 +131,9 @@ class Brain:
             check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
                                      else abs(sold-prediction['demand'])) if matched else None
             self.prediction_checks = (self.prediction_checks + [check])[-48:]
+            if matched and not check['surprise']:
+                self.phantom['exposures'] += 1
+                self.phantom['events'] += min(1., max(0., check['actual_rivals'] - prediction['rivals']))
         if realized_features is not None:
             fit = last if not surprise_spots else dict(last, spots={s: v for s, v in spot_results(last).items()
                                                                     if s not in surprise_spots})
@@ -198,6 +219,10 @@ class Brain:
         field = [h[-1] for name, h in self.history.items() if name in roster and h]
         scenarios = []
         self.scenario_rivals = []
+        # Own stream: unforeseen rivals must not shift the draws used for everything else.
+        phantoms = random.Random(hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'),
+                                                      'phantom')).encode()).digest())
+        rate = self.phantom_rate()
         for index in range(self.samples):
             # Stratified weather sampling reduces random ranking fluctuations.
             target, acc = (index + .5) / self.samples, 0.
@@ -243,6 +268,17 @@ class Brain:
                 if rng.random() < GIVEAWAY_CHANCE:
                     target = rng.choice(rules.spots)
                     thinned[target] = thinned.get(target, 1.) * rng.uniform(.6, .8)
+            for spot in rules.spots:
+                if field and phantoms.random() < rate:
+                    rec = phantoms.choice(field)
+                    q = rec['quality']
+                    price = round(clamp(rec['price'] + phantoms.gauss(0, .7), rules.price_min, rules.price_max), 2)
+                    rep = clamp(50. + phantoms.gauss(0, 12), 0, 100)
+                    meals = min(rules.capacity(q), int(rec['meals']))
+                    placements[spot].append((price, q, rep, meals))
+                    named.append({'id': 'phantom', 'spot': spot, 'price': price, 'quality': q,
+                                  'reputation': rep, 'meals': meals})
+                    active += min(1., meals * rules.costs[q] / 250.)
             crowds, models = {}, {}
             for spot in rules.spots:
                 average = sum(p * weather_factor(w, spot) for w, p in odds.items())

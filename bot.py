@@ -12,7 +12,7 @@ from strategy import Brain
 from history import warm_start
 from forecast_log import append_unique
 from mechanics import features
-from politics import choose_vote
+from politics import choose_vote, vote_analysis
 
 ROOT = Path(__file__).resolve().parent
 
@@ -102,6 +102,7 @@ class Runner:
         self.pending_features = None
         self.voted = set()
         self.staffed = set()
+        self.reported = set()
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
@@ -179,6 +180,25 @@ class Runner:
                                        actual_result=last.get('you'), actual_spots=last.get('spots')))
                 except OSError:
                     print('Evaluation log write failed', flush=True)
+
+    def vote_report(self, state):
+        """Say how the campaign looks for our order. Read-only; it never casts or changes a vote."""
+        election = (state.get('politics') or {}).get('election') or {}
+        key = (state.get('mode'), state.get('market'), election.get('id'), state.get('order_for_day'))
+        order = self.accepted_order or getattr(self.brain, 'last_order', None)
+        if not election.get('id') or key in self.reported or not order:
+            return
+        self.reported.add(key)
+        try:
+            analysis = vote_analysis(state, order)
+            if analysis:
+                parts = ['%s %+.0f/day, win %.0f%% (abstain %.0f%%), net %+.0f' %
+                         (r['id'], r['daily_value'], 100*r['p_win_vote'], 100*r['p_win_abstain'], r['net'])
+                         for r in analysis['rows']]
+                print('  vote (ours: %s; %d unvoted; margin $%.0f): %s' %
+                      (analysis['own'] or 'none', analysis['unvoted'], analysis['margin'], '; '.join(parts)), flush=True)
+        except Exception as error:
+            print('Vote report skipped (%s)' % type(error).__name__, flush=True)
 
     def vote(self, state, base):
         """Cast at most one cautious vote per election, after the order is safely handled."""
@@ -267,6 +287,7 @@ class Runner:
                         self.save()
                     self.record_evaluation(state)
                     self.health(state)
+                    self.vote_report(state)
                     self.vote(state, base)
                     self.staff(state, base)
                     continue
@@ -288,6 +309,7 @@ class Runner:
                     self.record(state, order)
                     self.save()
                     self.health(state)
+                    self.vote_report(state)
                     self.vote(state, base)
                     self.staff(state, base)
                     if isinstance(response.get('state'), dict):

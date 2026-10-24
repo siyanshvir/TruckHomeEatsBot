@@ -109,3 +109,47 @@ class PoolTests(unittest.TestCase):
         self.assertAlmostEqual(plan['pool_median_ask'], 6.68)
         model.plan(state(), {'price': 8.42, 'meals': 80}, [66, 80], 'me')
         self.assertAlmostEqual(model.pool['median'], 6.68)  # same day is not averaged twice
+
+
+class PhantomTests(unittest.TestCase):
+    def test_rate_starts_low_and_shrinks_with_quiet_days(self):
+        brain = Brain(samples=4)
+        start = brain.phantom_rate()
+        self.assertTrue(.03 <= start <= .1)
+        quiet = [{'order_matches': True, 'actual_rivals': 0, 'expected_rivals': .3} for _ in range(20)]
+        brain.phantom = Brain.bootstrap_phantom(quiet)
+        self.assertLess(brain.phantom_rate(), start)
+        busy = [{'order_matches': True, 'actual_rivals': 2, 'expected_rivals': .3} for _ in range(20)]
+        brain.phantom = Brain.bootstrap_phantom(busy)
+        self.assertGreater(brain.phantom_rate(), start)
+        self.assertLessEqual(brain.phantom_rate(), .30)
+
+    def test_scenarios_add_unforeseen_rivals_without_shifting_other_draws(self):
+        import random
+        from game import Rules
+        from sim import Market
+        market = Market('phantom', rivals=3, days=4)
+        brain = Brain(samples=300, small_crowds=True)
+        state = market.state()
+        brain.decide(state)
+        state = market.play(brain.last_order)
+        brain.observe(state)  # rival history is what unforeseen rivals are drawn from
+        state['order_for_day'] = 3
+        rules, counts = Rules.read(state), dict.fromkeys(Rules.read(state).spots, 100.)
+        brain.phantom = {'events': 0., 'exposures': 1000.}  # rate floor
+        floor = brain.scenarios(state, rules, counts, random.Random(1))
+        brain.phantom = {'events': 300., 'exposures': 1000.}  # rate .30
+        high = brain.scenarios(state, rules, counts, random.Random(1))
+        self.assertTrue(any(r['id'] == 'phantom' for row in brain.scenario_rivals for r in row))
+        total = lambda sc: sum(len(p) for placements, _, _, _ in sc for p in placements.values())
+        self.assertGreater(total(high), total(floor))
+        self.assertEqual([c for _, c, _, _ in floor], [c for _, c, _, _ in high])  # crowds are unchanged
+
+    def test_checkpoint_roundtrip_and_old_checkpoints(self):
+        brain = Brain(samples=4)
+        brain.phantom = {'events': 2., 'exposures': 30.}
+        other = Brain(samples=4); other.restore(brain.dump())
+        self.assertEqual(other.phantom, brain.phantom)
+        data = brain.dump(); data.pop('phantom')
+        legacy = Brain(samples=4); legacy.restore(data)
+        self.assertIn('events', legacy.phantom)
