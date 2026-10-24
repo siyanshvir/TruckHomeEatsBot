@@ -74,6 +74,15 @@ class Brain:
                 phantom['events'] += min(1., max(0., check['actual_rivals'] - check['expected_rivals']))
         return phantom
 
+    def game_day_rate(self):
+        """Share of observed days with a game, shrunk toward 25%: how often game-day laws would bite."""
+        days = {}
+        for records in self.history.values():
+            for record in records:
+                days[record.get('day')] = days.get(record.get('day'), False) or (
+                    'game' in ((record.get('context') or {}).get('events') or []))
+        return (sum(days.values()) + 1.) / (len(days) + 4.)
+
     def phantom_rate(self):
         low, high = PHANTOM_LIMITS
         return min(high, max(low, self.phantom['events'] / self.phantom['exposures']))

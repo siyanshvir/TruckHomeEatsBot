@@ -13,10 +13,16 @@ CROWDS = {'curfew': {'highst': .75, 'northres': .75, 'oval': 1.1, 'thompson': 1.
 
 
 def law_terms(policies):
-    terms = {'floor': None, 'cap': None, 'per_meal': {}, 'money': None, 'crowd': {}}
+    terms = {'floor': None, 'cap': None, 'per_meal': {}, 'money': None, 'crowd': {}, 'game_crowd': {}, 'riot': 1.}
     for policy in policies or []:
         name = str(policy.get('key') or str(policy.get('text', '')).split(':')[0]).lower().replace('_', ' ')
         params = policy.get('params') or {}
+        # Any law may carry spot crowd multipliers, whatever it is called: read what the API says.
+        if isinstance(params.get('crowd'), dict):
+            terms['crowd'] = {s: float(m) for s, m in params['crowd'].items() if isinstance(m, (int, float))}
+        if isinstance(params.get('game_crowd'), dict):
+            terms['game_crowd'] = {s: float(m) for s, m in params['game_crowd'].items() if isinstance(m, (int, float))}
+            terms['riot'] = float(params['riot']) if isinstance(params.get('riot'), (int, float)) else 1.
         if 'floor' in name:
             terms['floor'] = float(params.get('min_price', 7.5))
         elif 'price' in name and 'cap' in name:
@@ -29,8 +35,8 @@ def law_terms(policies):
             flat, share, above = MONEY['tax top' if 'top' in name else 'flat fee']
             terms['money'] = (float(params.get('flat', flat)), float(params.get('revenue_share', share)),
                               float(params.get('above', above)))
-        elif 'curfew' in name or 'quiet' in name:
-            terms['crowd'] = dict(params.get('crowd') or CROWDS['curfew' if 'curfew' in name else 'quiet core'])
+        elif ('curfew' in name or 'quiet' in name) and not terms['crowd']:
+            terms['crowd'] = dict(CROWDS['curfew' if 'curfew' in name else 'quiet core'])
     return terms
 
 
@@ -75,7 +81,7 @@ def win_odds(ids, tally, unvoted, ours, samples=400, turnout=.7, seed=7):
     return odds
 
 
-def vote_analysis(state, order):
+def vote_analysis(state, order, game_rate=.25):
     """Per candidate: daily law value, win odds with and without our vote, protest cost, net gain."""
     election = (state.get('politics') or {}).get('election') or {}
     candidates = [c for c in election.get('candidates') or [] if isinstance(c, dict) and c.get('id')]
@@ -90,8 +96,14 @@ def vote_analysis(state, order):
         terms = law_terms(candidate.get('policies'))
         price = charged_price(terms, order['price'])
         crowd = min(order['meals'], sales * terms['crowd'].get(order.get('spot'), 1.))
-        value[candidate['id']] = ((crowd - sales) * unit + crowd * (price - order['price'])
-                                  + law_profit(terms, crowd, price, order['quality']))
+        daily = ((crowd - sales) * unit + crowd * (price - order['price'])
+                 + law_profit(terms, crowd, price, order['quality']))
+        game = terms['game_crowd']
+        if game:  # on a game day our crowd changes; other days it does not
+            on_game = min(order['meals'], crowd * game.get(order.get('spot'), game.get('other', 1.)))
+            daily += game_rate * ((on_game - crowd) * unit
+                                  + law_profit(terms, on_game, price, order['quality']) - law_profit(terms, crowd, price, order['quality']))
+        value[candidate['id']] = daily
     tally = {c: int(n) for c, n in (election.get('tally') or {}).items()}
     own = you.get('vote') if you.get('vote') in ids else None
     if own:
@@ -121,9 +133,9 @@ def vote_analysis(state, order):
     return {'rows': rows, 'margin': round(margin, 1), 'term_days': term, 'unvoted': unvoted, 'own': own}
 
 
-def choose_vote(state, order):
+def choose_vote(state, order, game_rate=.25):
     """Candidate id whose laws most help our usual order, or None to abstain."""
-    analysis = vote_analysis(state, order)
+    analysis = vote_analysis(state, order, game_rate)
     if not analysis:
         return None
     best = max(analysis['rows'], key=lambda r: r['net'])

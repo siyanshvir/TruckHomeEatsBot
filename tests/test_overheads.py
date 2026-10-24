@@ -111,3 +111,33 @@ class VoteRunnerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GameDayLawTests(unittest.TestCase):
+    def test_game_day_laws_are_read_from_params_and_weighted_by_game_day_rate(self):
+        from politics import vote_analysis
+        order = {'spot': 'thompson', 'quality': 'premium', 'price': 10., 'meals': 90}
+        crackdown = {'key': 'crackdown', 'params': {'game_crowd': {'stadium': .85, 'highst': .85, 'schott': .85, 'other': 1.1}, 'riot': 0}}
+        tailgate = {'key': 'tailgate', 'params': {'game_crowd': {'stadium': 1.3, 'highst': 1.3, 'schott': 1.3, 'other': .9}, 'riot': 1.5}}
+        state = {'days': 65, 'you': {'id': 'me', 'cash': 100}, 'trucks': [{'id': t, 'cash': 500} for t in ('me', 'a', 'b', 'c', 'd', 'e')],
+                 'politics': {'election': {'id': 'e2', 'vote_day': 34, 'tally': {}, 'votes': {},
+                              'candidates': [{'id': 'c1', 'policies': [crackdown]}, {'id': 'c2', 'policies': [tailgate]}]}}}
+        low = {r['id']: r for r in vote_analysis(state, order, .1)['rows']}
+        high = {r['id']: r for r in vote_analysis(state, order, .5)['rows']}
+        self.assertGreater(low['c1']['daily_value'], 0)   # Thompson is "other": crackdown helps
+        self.assertLess(low['c2']['daily_value'], 0)      # tailgate hurts
+        self.assertGreater(high['c1']['daily_value'], low['c1']['daily_value'])
+        self.assertLess(high['c2']['daily_value'], low['c2']['daily_value'])
+        from politics import law_terms
+        self.assertEqual(law_terms([crackdown])['riot'], 0)
+
+    def test_any_law_with_crowd_params_is_used_even_with_an_unknown_name(self):
+        from politics import law_terms
+        terms = law_terms([{'key': 'mystery_rule', 'params': {'crowd': {'thompson': 1.2}}}])
+        self.assertEqual(terms['crowd'], {'thompson': 1.2})
+
+    def test_brain_estimates_game_day_rate_from_history(self):
+        brain = Brain(samples=4)
+        self.assertAlmostEqual(brain.game_day_rate(), .25)
+        brain.history = {'x': [{'day': d, 'context': {'events': ['game'] if d % 3 == 0 else []}} for d in range(1, 31)]}
+        self.assertGreater(brain.game_day_rate(), .25)

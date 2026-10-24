@@ -190,7 +190,7 @@ class Runner:
             return
         self.reported.add(key)
         try:
-            analysis = vote_analysis(state, order)
+            analysis = vote_analysis(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)())
             if analysis:
                 parts = ['%s %+.0f/day, win %.0f%% (abstain %.0f%%), net %+.0f' %
                          (r['id'], r['daily_value'], 100*r['p_win_vote'], 100*r['p_win_abstain'], r['net'])
@@ -209,7 +209,7 @@ class Runner:
             return
         self.voted.add(key)
         try:
-            choice = choose_vote(state, order)
+            choice = choose_vote(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)())
             if choice and not (state.get('you') or {}).get('vote'):  # never override a vote already cast
                 status, _ = self.client.call('POST', base + '/vote', {'candidate': choice}, timeout=5.)
                 print('Vote for %s: HTTP %s' % (choice, status), flush=True)
