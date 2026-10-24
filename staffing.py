@@ -36,14 +36,20 @@ class CrewModel:
         return {'pool': self.pool, 'poach': self.poach, 'pending': self.pending, 'checks': self.checks[-48:]}
 
     # --- learning -------------------------------------------------------
-    def observe(self, state, me):
-        labor, last = state.get('labor'), state.get('last_day') or {}
-        if isinstance(labor, dict) and labor.get('median_asking_wage') is not None:
+    def see_labor(self, state):
+        """Fold in the pool stats once per day; planning also calls this, so a restart is not blind."""
+        labor = state.get('labor')
+        day = state.get('order_for_day') or state.get('day')
+        if isinstance(labor, dict) and labor.get('median_asking_wage') is not None and self.pool.get('day') != day:
             old = self.pool.get('median')
             median = float(labor['median_asking_wage'])
-            self.pool = {'median': median if old is None else .6*old + .4*median,
+            self.pool = {'median': median if old is None else .6*old + .4*median, 'day': day,
                          'lowest': float(labor.get('lowest_asking_wage', median)),
                          'unemployed': int(labor.get('unemployed', 0))}
+
+    def observe(self, state, me):
+        last = state.get('last_day') or {}
+        self.see_labor(state)
         pending = self.pending
         if not pending or last.get('day') != pending['day']:
             return
@@ -88,6 +94,7 @@ class CrewModel:
 
     def plan(self, state, order, sales, me):
         """Best (headcount, wage) for the accepted order, given scenario sales."""
+        self.see_labor(state)
         crew = (state.get('you') or {}).get('staff') or {}
         current_h, current_w = int(crew.get('target', 4)), float(crew.get('wage', 6))
         meals = int(order['meals'])

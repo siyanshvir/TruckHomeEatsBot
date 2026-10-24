@@ -100,3 +100,12 @@ class SurpriseTests(unittest.TestCase):
         brain.observe(state)
         self.assertEqual(brain.learner.to_dict()['crowd'][order['spot']], before)
         self.assertTrue(brain.prediction_checks[-1]['surprise'])
+
+
+class PoolTests(unittest.TestCase):
+    def test_planning_learns_the_pool_without_a_prior_observe(self):
+        model = CrewModel()
+        plan = model.plan(state(), {'price': 8.42, 'meals': 80}, [66, 80], 'me')
+        self.assertAlmostEqual(plan['pool_median_ask'], 6.68)
+        model.plan(state(), {'price': 8.42, 'meals': 80}, [66, 80], 'me')
+        self.assertAlmostEqual(model.pool['median'], 6.68)  # same day is not averaged twice
