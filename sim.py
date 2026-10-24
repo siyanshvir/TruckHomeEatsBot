@@ -156,6 +156,16 @@ class House:
         if self.kind == "chaser":       # goes where the most customers are expected
             exp = state["forecast"]["expected_customers"]
             return {"spot": max(exp, key=exp.get), "price": 11.0, "quality": "standard", "meals": 133}
+        if self.kind == "pchaser":      # live-style: premium around $10-11, follows the crowd
+            exp = state["forecast"]["expected_customers"]
+            spot = max(exp, key=exp.get) if rng.random() < 0.6 else rng.choice(S.SPOTS)
+            return {"spot": spot, "price": round(rng.uniform(10.0, 11.3), 2), "quality": "premium", "meals": 90}
+        if self.kind == "undercut":     # undercuts yesterday's best-selling rival price by a few cents
+            last = state.get("last_day") or {}
+            prices = [t["price"] for info in (last.get("spots") or {}).values() for t in info["trucks"]
+                      if t["quality"] == "premium"]
+            price = round((min(prices) - 0.05) if prices else 10.5, 2)
+            return {"spot": rng.choice(S.SPOTS), "price": max(9.0, price), "quality": "premium", "meals": 90}
         events = state["forecast"]["events"]
         keys = [e["key"] for e in events]
         if self.kind == "eddie":         # the practice server's house bots

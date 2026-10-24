@@ -137,6 +137,7 @@ def play(base):
                 report(state)
             except Exception:
                 pass
+            log_state(state)
             order = decide(state)
             if order is None and state.get("mode") == "practice":
                 # a practice day only advances once we order: buy one meal nobody will pay for

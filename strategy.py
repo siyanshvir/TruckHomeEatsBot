@@ -61,14 +61,17 @@ EVENTS = {
 PARAMS = {
     "rep_w": 3.0,         # weight on the future value of a reputation point
     "rep_horizon": 12,    # days of future benefit counted for a reputation change
-    "stay": 0.65,         # probability a rival parks where it parked yesterday (blended with history)
-    "smart": 0.15,        # probability a rival heads for the busiest spot instead
+    "stay": 0.5,          # probability a rival parks where it parked yesterday (blended with history)
+    "smart": 0.3,         # probability a rival moves toward the crowds instead of its usual spots
+    "smart_pow": 1.0,     # how strongly moving rivals favour crowded spots (50 = only the busiest)
+    "phantom": 1,         # unseen premium rivals assumed per placement sample (0 = trust the history)
     "noise": 0.12,        # relative day-to-day noise in a spot's demand
     "samples": 12,        # rival placement samples
     "learn_temp": 6.0,    # temperature of the likelihood used to fit customer distributions
     "time_budget": 0.9,   # seconds allowed for the search
     "min_profit": 1.0,    # sit out unless the order is expected to make at least this much
     "price_sd": 1.0,      # default day-to-day price spread assumed for adaptive rivals
+    "psd_min": 0.4,       # smallest price spread assumed for a rival that changes its prices
 }
 
 # Grid of corrections to the prior customer model that the learner weighs per spot.
@@ -261,9 +264,11 @@ class Brain:
             self.p.update(params)
         self.seed = seed
         self.market = None
+        self._warned = False
         self.reset()
 
-    def reset(self):
+    def reset(self, new_market=False):
+        keep = (self.rivals, self.logw, self.wfac, self.cal, self.me) if new_market else None
         self.seen_day = None
         self.last_order_day = None
         self.rivals = {}          # name -> list of dicts (day, spot, price, q, meals, sold)
@@ -274,6 +279,8 @@ class Brain:
         self.pending_forecast = None          # (day, {spot: expected}, weather probs)
         self.me = None
         self.days_at = {s: 0 for s in SPOTS}
+        if keep:      # same rivals and same customers in every market: carry over what we learned
+            self.rivals, self.logw, self.wfac, self.cal, self.me = keep
 
     # ---- bookkeeping
 
@@ -286,7 +293,7 @@ class Brain:
         if key != self.market or (day is not None and self.last_order_day is not None
                                   and day < self.last_order_day) or day in (0, 1) and self.seen_day:
             self.market = key
-            self.reset()
+            self.reset(new_market=True)
         if day is not None:
             self.last_order_day = day
         last = state.get("last_day") or {}
@@ -295,8 +302,10 @@ class Brain:
             self.seen_day = ld
             try:
                 self.observe(state, last)
-            except Exception:
-                pass
+            except Exception as e:
+                if not self._warned:
+                    self._warned = True
+                    print("  strategy: could not learn from day %s (%r)" % (ld, e))
 
     def observe(self, state, last):
         you = last.get("you") or {}
@@ -465,8 +474,11 @@ class Brain:
     def rival_predictions(self, state, expected, day):
         """Sampled joint rival placements: list of {spot: [(name, price, q, rf, meals)]}."""
         rng = random.Random(hash((self.seed, self.market, day)) & 0xffffffff)
-        busiest = max(expected, key=expected.get) if expected else None
+        attract = {s: max(_num(expected.get(s), 0.0), 1.0) ** self.p["smart_pow"] for s in SPOTS}
+        attract_total = sum(attract.values())
         names = list(self.rivals)
+        premium = sorted(h[-1]["price"] for h in self.rivals.values() if h and h[-1]["q"] == 2)
+        field_price = premium[len(premium) // 2] if premium else 10.5     # what premium trucks charge now
         plans = []
         for name in names:
             hist = self.rivals[name][-10:]
@@ -483,8 +495,8 @@ class Brain:
             smart = self.p["smart"] * (1.0 - stay)
             probs = {s: (1 - stay - smart) * freq.get(s, 0.0) / tot for s in SPOTS}
             probs[last["spot"]] += stay
-            if busiest:
-                probs[busiest] += smart
+            for s in SPOTS:
+                probs[s] += smart * attract[s] / attract_total
             # price habit: steady rivals repeat their price; adaptive rivals get a spread
             prices = [r["price"] for r in hist]
             steps = [b - a for a, b in zip(prices, prices[1:])]
@@ -492,7 +504,7 @@ class Brain:
                 psd, trend = 0.0, 0.0
             else:
                 psd = statistics.pstdev(steps) if len(steps) >= 2 else self.p["price_sd"]
-                psd = max(0.15, min(2.0, 0.5 * psd + 0.5 * self.p["price_sd"]))
+                psd = max(self.p["psd_min"], min(2.0, 0.5 * psd + 0.5 * self.p["price_sd"]))
                 trend = 0.5 * sum(steps[-3:]) / len(steps[-3:]) if steps else 0.0
             plans.append((name, last, probs, psd, trend))
         samples = []
@@ -511,6 +523,17 @@ class Brain:
                     price = round(max(COST[last["q"]] + 0.1, price + trend + rng.gauss(0.0, psd)), 2)
                 by_spot[pick].append((name, price, last["q"], rep_factor(rep),
                                       last["meals"] if last["meals"] > 0 else INF))
+            # newcomers and rivals we have not seen move: a premium truck priced like the field may
+            # show up anywhere, more likely where the crowd is (an "empty" spot is rarely empty)
+            for k in range(int(self.p["phantom"])):
+                r, acc, pick = rng.random() * attract_total, 0.0, SPOTS[-1]
+                for s in SPOTS:
+                    acc += attract[s]
+                    if r <= acc:
+                        pick = s
+                        break
+                by_spot[pick].append(("phantom%d" % k, round(max(COST[2] + 0.1, field_price + rng.gauss(0.0, 0.4)), 2),
+                                      2, rep_factor(52.0), 90.0))
             samples.append(by_spot)
         return samples
 
@@ -533,7 +556,8 @@ class Brain:
 
         best = None
         cands = []
-        for spot in SPOTS:
+        out_of_time = False
+        for spot in sorted(SPOTS, key=lambda s: -expected[s]):
             rep = _num(my_reps.get(spot, 50), 50)
             rf = rep_factor(rep)
             mu, sd, qmix = self.spot_model(spot, kinds)
@@ -546,7 +570,12 @@ class Brain:
                     cands.append(res)
                     if best is None or res[0] > best[0]:
                         best = res
-            if time.time() - t0 > p["time_budget"] * 0.7:
+                    if time.time() - t0 > p["time_budget"] * 0.7:
+                        out_of_time = True
+                        break
+                if out_of_time:
+                    break
+            if out_of_time:
                 break
         # refine the price around the top few (spot, quality) choices
         cands.sort(key=lambda r: -r[0])
@@ -569,6 +598,8 @@ class Brain:
                 r2 = self._evaluate(spot, qi, price, rf, rep, mu, sd, qmix, scen, groups, days_left)
                 if r2[0] > best[0]:
                     best = r2
+                if time.time() - t0 > p["time_budget"]:
+                    break
             if time.time() - t0 > p["time_budget"]:
                 break
         if best is None or best[2] < p["min_profit"]:
