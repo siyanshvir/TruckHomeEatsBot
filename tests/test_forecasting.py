@@ -1,5 +1,8 @@
 import json
 import unittest
+import tempfile
+from pathlib import Path
+from history import warm_start
 from game import expected_sales, _customer_segments, VALUES
 from learning import Learner
 from strategy import Brain
@@ -8,6 +11,47 @@ from game import Rules, SPOTS
 
 
 class ForecastingTests(unittest.TestCase):
+    def test_api_crowds_not_reduced_again_for_inactive_roster(self):
+        state = Market('api-counts', rivals=8, days=3).state()
+        state['forecast'].pop('population_basis')
+        state['order_for_day'] = state['days']
+        placements = {s: [] for s in SPOTS}
+        crowds = dict.fromkeys(SPOTS, 39)
+        models = {s: (100, 1, (0, 0, 1)) for s in SPOTS}
+        brain = Brain(samples=4)
+        scenarios = [(placements, crowds, models, 3.)]*4
+        supplied = brain.evaluate(state, Rules.read(state), 'stadium', 'premium', 8.5, scenarios)
+        self.assertEqual(supplied['order']['meals'], 39)
+        self.assertEqual(supplied['demand'], 39)
+        state['forecast']['population_basis'] = 'registered_trucks'
+        synthetic = brain.evaluate(state, Rules.read(state), 'stadium', 'premium', 8.5, scenarios)
+        self.assertLess(synthetic['order']['meals'], 20)
+
+    def test_daytime_history_replay_retains_next_forecast(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)/'data'/'live-observations'
+            directory.mkdir(parents=True)
+            for day in (1, 2):
+                state = {'mode': 'live', 'market': 1, 'phase': 'day', 'order_for_day': None,
+                         'you': {'id': 'us'}, 'trucks': [],
+                         'last_day': {'day': day, 'weather': 'clear',
+                                      'spots': {'oval': {'customers': 100, 'trucks': []}}},
+                         'forecast': {'day': day+1, 'weather': {'clear': 1},
+                                      'expected_customers': {'oval': 100}}}
+                (directory/('%d.json' % day)).write_text(json.dumps(state))
+            brain = Brain()
+            self.assertEqual(warm_start(brain, folder), 2)
+            self.assertEqual(brain.learner.crowd_variance['oval']['clear'][0], 1)
+            self.assertEqual(brain.pending['day'], 3)
+            self.assertEqual(warm_start(brain, folder), 0)
+
+    def test_supplied_events_and_weather_are_not_multiplied_twice(self):
+        state = Market('double-events', rivals=5, days=3).state()
+        state['forecast'].update(events=['game', 'concert', 'midterm'],
+                                 weather={'rain': 1}, expected_customers=dict.fromkeys(SPOTS, 100))
+        brain = Brain()
+        self.assertEqual(brain.forecast(state, Rules.read(state)), dict.fromkeys(SPOTS, 100))
+
     def inventory(self, crowds, constrained=True):
         state = Market('cushion', rivals=3, days=3).state()
         state['order_for_day'] = state['days']

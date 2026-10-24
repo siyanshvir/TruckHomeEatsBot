@@ -53,8 +53,10 @@ registered rivals are modeled; no invented extra competitors are added.
 
 For each location/quality/price, every feasible integer inventory, including
 zero, competes on expected revenue minus food costs and a downside-loss penalty.
-Production's contribution to campus demand is approximated at three levels and
-interpolated. A bounded reputation benefit declines toward the end of a market;
+Published API crowds are used directly: they are not reduced a second time for
+inactive trucks. Participation scaling at three production levels is reserved
+for synthesized full-roster forecasts (explicitly marked by the offline simulator).
+A bounded reputation benefit declines toward the end of a market;
 a small information bonus encourages early exploration. Prices obey the low ceilings above, the game's limits, and the maximum
 nonnegative customer value for that quality and reputation. Within those limits,
 they do not have to undercut every rival: overflow and reputation can still matter.

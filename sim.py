@@ -50,6 +50,7 @@ class Market:
                     customers.append((budget, minimum))
                 spot_customers[spot] = customers
             self.schedule.append(({'weather': odds, 'events': [] if event == 'none' else [event],
+                                   'population_basis': 'registered_trucks',
                                    'expected_customers': expected}, weather, spot_customers))
 
     def state(self):

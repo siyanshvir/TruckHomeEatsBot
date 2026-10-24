@@ -205,10 +205,15 @@ class Brain:
         distributions = []
         for placement, crowds, models, active in scenarios:
             trucks = placement[spot] + [(price, quality, rep, float('inf'))]
-            # Estimate demand at three production levels, then interpolate while sizing
-            # stock. This accounts for our own contribution to campus demand. The
-            # four-truck floor often makes all three levels identical.
-            levels = [max(4., active + contribution) / baseline for contribution in (0., .5, 1.)]
+            # The API already publishes expected crowds, rather than a hypothetical
+            # full-roster population. Scaling those counts by participation again
+            # double-discounts inactive teams. Only synthesized/full-roster forecasts
+            # need a participation adjustment (our offline simulator marks its basis).
+            forecast = state.get('forecast') or {}
+            supplied = spot in (forecast.get('expected_customers') or {})
+            roster_basis = forecast.get('population_basis') == 'registered_trucks'
+            levels = ([1., 1., 1.] if supplied and not roster_basis else
+                      [max(4., active + contribution) / baseline for contribution in (0., .5, 1.)])
             demands = {}
             for scale in set(levels):
                 demands[scale] = expected_sales(trucks, crowds[spot] * scale, models[spot], rules.values)[-1]

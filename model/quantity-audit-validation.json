@@ -1,0 +1,89 @@
+{
+  "baseline_commit": "4b2abab",
+  "fixes": [
+    "Do not scale API expected_customers again for predicted participation.",
+    "Retain tomorrow forecast when replaying daytime snapshots with null order_for_day."
+  ],
+  "tests_passed": 43,
+  "official_before": {
+    "source": "server-practice",
+    "days": 30,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "quantity-audit",
+        "rivals": 7,
+        "style": "house",
+        "profit": 6900.64,
+        "waste": 179,
+        "zero_sale_days": 0,
+        "worst_day": 62.39,
+        "decision_max_seconds": 0.17974729102570564,
+        "decision_mean_seconds": 0.15054657079745085
+      }
+    ]
+  },
+  "official_after": {
+    "source": "server-practice",
+    "days": 30,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "quantity-audit",
+        "rivals": 7,
+        "style": "house",
+        "profit": 7370.5,
+        "waste": 208,
+        "zero_sale_days": 0,
+        "worst_day": 51.25,
+        "decision_max_seconds": 0.1613415830070153,
+        "decision_mean_seconds": 0.1427248055386978
+      }
+    ]
+  },
+  "offline_regression": {
+    "source": "approximate-offline",
+    "days": 30,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "forecast-upgrade",
+        "rivals": 12,
+        "style": "brutal",
+        "profit": 4517.360000000001,
+        "waste": 531,
+        "zero_sale_days": 0,
+        "worst_day": -434.75,
+        "decision_max_seconds": 0.22885429090820253,
+        "decision_mean_seconds": 0.19130799716028074
+      },
+      {
+        "policy": "learned",
+        "seed": "forecast-upgrade",
+        "rivals": 12,
+        "style": "moving",
+        "profit": 9677.4,
+        "waste": 72,
+        "zero_sale_days": 0,
+        "worst_day": -159.25,
+        "decision_max_seconds": 0.23201416700612754,
+        "decision_mean_seconds": 0.1868122166992786
+      }
+    ]
+  },
+  "limitations": [
+    "One matched official private-practice seed; not proof of live profit improvement.",
+    "Official waste increased from 179 to 208 meals while profit rose.",
+    "Offline simulator explicitly marks its full-roster population basis and preserves its prior results."
+  ],
+  "live_prediction_only": {
+    "day": 13,
+    "order": {
+      "spot": "union",
+      "quality": "premium",
+      "price": 8.5,
+      "meals": 90
+    },
+    "submitted": false
+  }
+}

@@ -18,7 +18,11 @@ def warm_start(brain, root):
         if day is None or (brain.seen is not None and day <= brain.seen):
             continue
         brain.observe(state)
-        if state.get('forecast') and state.get('order_for_day'):
-            brain.pending = {'day': state['order_for_day'], 'forecast': state['forecast']}
+        forecast = state.get('forecast') or {}
+        next_day = forecast.get('day') or state.get('order_for_day')
+        # Day-phase snapshots also contain tomorrow's forecast, even while orders
+        # are closed and order_for_day is null. Preserve it for the next result.
+        if next_day is not None and next_day > day:
+            brain.pending = {'day': next_day, 'forecast': forecast}
         loaded += 1
     return loaded
