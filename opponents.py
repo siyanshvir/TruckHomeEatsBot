@@ -9,8 +9,11 @@ import math
 from pricing_models import reference_prices
 from game import SPOTS, QUALITIES, COSTS, VALUES, clamp, events, weather_probs
 
-LOCATION_MODELS = ('uniform', 'habit', 'repeat', 'crowd', 'context', 'opportunity')
-PRICE_MODELS = ('context', 'repeat', 'undercut', 'cycle')
+LOCATION_MODELS = ('uniform', 'habit', 'repeat', 'crowd', 'context', 'opportunity', 'follow')
+PRICE_MODELS = ('context', 'repeat', 'undercut', 'cycle', 'follow')
+# A new behavior starts well below the incumbents (log weight), and must earn its share.
+NEW_EXPERT_LOG_WEIGHT = -2.
+FOLLOW_DEPTH_PRIOR, FOLLOW_DEPTH_RANGE = 1., (-1., 6.)
 
 
 def normalize(values):
@@ -43,13 +46,19 @@ def similarity(left, right):
 class OpponentModel:
     def __init__(self, data=None):
         self.data = data or {}
+        self.ours = []  # our own recent records, oldest first: what a rival that follows us has seen
 
     def entry(self, name):
-        return self.data.setdefault(name, {'location': [0.]*len(LOCATION_MODELS),
-                                          'price': [0.]*len(PRICE_MODELS),
-                                          'active': 0., 'absent': 0., 'scored': 0,
-                                          'log_loss': 0., 'repeat_log_loss': 0.,
-                                          'price_count': 0, 'price_error': 0., 'repeat_price_error': 0.})
+        e = self.data.setdefault(name, {'location': [0.]*(len(LOCATION_MODELS)-1) + [NEW_EXPERT_LOG_WEIGHT],
+                                       'price': [0.]*(len(PRICE_MODELS)-1) + [NEW_EXPERT_LOG_WEIGHT],
+                                       'active': 0., 'absent': 0., 'scored': 0,
+                                       'log_loss': 0., 'repeat_log_loss': 0.,
+                                       'price_count': 0, 'price_error': 0., 'repeat_price_error': 0.})
+        # Checkpoints saved before the follow behavior existed keep their weights.
+        for key, names in (('location', LOCATION_MODELS), ('price', PRICE_MODELS)):
+            e[key] = list(e[key]) + [NEW_EXPERT_LOG_WEIGHT]*(len(names)-len(e[key]))
+        e.setdefault('follow_depth', FOLLOW_DEPTH_PRIOR)
+        return e
 
     def attendance(self, name):
         e = self.entry(name)
@@ -85,7 +94,12 @@ class OpponentModel:
                 if rec['spot'] in pressure:
                     pressure[rec['spot']] += rec['meals']*.96**age/total
         opportunity = normalize([float(counts.get(s, 0))/(1.+pressure[s]/max(1., float(counts.get(s, 0)))) for s in spots])
-        return [uniform, normalize(habit), normalize(repeat), crowd, normalize(nearby), opportunity]
+        follow = [.1/len(spots)]*len(spots)  # mass where we have been recently, newest most
+        for age, rec in enumerate(reversed(self.ours[-6:])):
+            if rec.get('spot') in spots:
+                follow[spots.index(rec['spot'])] += .6**age
+        return [uniform, normalize(habit), normalize(repeat), crowd, normalize(nearby), opportunity,
+                normalize(follow)]
 
     def placement(self, name, history, forecast, histories, spots=SPOTS):
         experts = self.location_experts(name, history, forecast, histories, spots)
@@ -114,7 +128,10 @@ class OpponentModel:
                        and h[-1]['quality'] == quality and (spot is None or h[-1]['spot'] == spot)]
         floor, upper = COSTS[quality]+.5, min(VALUES[quality]-.5, default+3.)
         undercut, cycle = reference_prices(competitors, mean, floor, upper)
-        return [mean, repeat, undercut, cycle], max(.2, min(2., math.sqrt(variance+.16))), stock
+        # Follow: undercut the price our truck charged last, by the depth this rival has shown.
+        seen = [r for r in self.ours[-3:] if r.get('quality') == quality and (spot is None or r.get('spot') == spot)]
+        follow = clamp(float(seen[-1]['price']) - self.entry(name)['follow_depth'], floor, upper) if seen else mean
+        return [mean, repeat, undercut, cycle, follow], max(.2, min(2., math.sqrt(variance+.16))), stock
 
     def pricing(self, name, history, forecast, histories, quality, spot=None):
         experts, spread, stock = self.price_experts(name, history, forecast, histories, quality, spot)
@@ -141,6 +158,10 @@ class OpponentModel:
             updated = [.98*w+.7*math.log(max(p[index], 1e-6)) for w, p in zip(e['location'], experts)]
             maximum = max(updated)
             e['location'] = [max(-12., x-maximum) for x in updated]
+        if self.ours and record['spot'] == self.ours[-1].get('spot') and record['quality'] == self.ours[-1].get('quality'):
+            low, high = FOLLOW_DEPTH_RANGE
+            depth = clamp(float(self.ours[-1]['price']) - float(record['price']), low, high)
+            e['follow_depth'] = .5*e['follow_depth'] + .5*depth
         if history:
             quality = record['quality']
             experts, spread, _ = self.price_experts(name, history, forecast, histories, quality, record['spot'])

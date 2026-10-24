@@ -101,3 +101,49 @@ class OpponentTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class FollowTests(unittest.TestCase):
+    def _history(self, spots):
+        return [{'spot': s, 'price': 9., 'quality': 'standard', 'meals': 80, 'sold': 60, 'context': {}, 'day': d}
+                for d, s in enumerate(spots, 1)]
+
+    def test_rival_that_moves_onto_our_spot_gains_follow_weight(self):
+        from opponents import OpponentModel
+        model = OpponentModel()
+        mine = ['oval', 'union', 'stadium', 'highst', 'northres', 'thompson', 'oval', 'stadium', 'union', 'highst']
+        ours = self._history(mine)
+        forecast = {'expected_customers': dict.fromkeys(('oval', 'thompson', 'union', 'stadium', 'highst', 'northres'), 100)}
+        rival_history = []
+        before = OpponentModel().summary('wagyu', [], forecast, {})['location_models']['follow']
+        for day in range(1, 10):  # each day the rival parks where we were the day before
+            model.ours = ours[:day]
+            record = {'spot': mine[day-1], 'price': 5.5, 'quality': 'standard', 'meals': 67, 'sold': 67,
+                      'context': {}, 'day': day}
+            model.observe('wagyu', record, rival_history, forecast, {})
+            rival_history.append(record)
+        model.ours = ours
+        summary = model.summary('wagyu', rival_history, forecast, {})
+        self.assertGreater(summary['location_models']['follow'], 3*before)
+        self.assertEqual(max(summary['locations'], key=summary['locations'].get), 'highst')  # where we were last
+
+    def test_follow_price_learns_undercut_depth_and_old_entries_load(self):
+        from opponents import OpponentModel
+        model = OpponentModel({'wagyu': {'location': [0.]*6, 'price': [0.]*4, 'active': 3., 'absent': 0.,
+                                         'scored': 2, 'log_loss': 1., 'repeat_log_loss': 1.,
+                                         'price_count': 0, 'price_error': 0., 'repeat_price_error': 0.}})
+        self.assertEqual(len(model.entry('wagyu')['location']), 7)
+        self.assertEqual(len(model.entry('wagyu')['price']), 5)
+        model.ours = [{'spot': 'thompson', 'price': 9., 'quality': 'standard', 'meals': 79, 'sold': 58, 'context': {}, 'day': 29}]
+        record = {'spot': 'thompson', 'price': 5.46, 'quality': 'standard', 'meals': 67, 'sold': 67, 'context': {}, 'day': 30}
+        for _ in range(4):
+            model.observe('wagyu', record, [], {}, {})
+        self.assertGreater(model.entry('wagyu')['follow_depth'], 3.)
+        experts, _, _ = model.price_experts('wagyu', [], {}, {}, 'standard', 'thompson')
+        self.assertLess(experts[4], 6.)
+
+    def test_no_history_of_ours_leaves_follow_neutral(self):
+        from opponents import OpponentModel
+        model = OpponentModel()
+        experts, _, _ = model.price_experts('r', [], {}, {}, 'standard', 'oval')
+        self.assertEqual(experts[4], experts[0])

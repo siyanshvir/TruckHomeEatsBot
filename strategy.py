@@ -156,6 +156,7 @@ class Brain:
         # Score each prediction before adding ANY of today's orders to history.
         # This prevents both future-data leakage and truck iteration-order effects.
         roster = {identity(t) for t in state.get('trucks') or []} | set(records)
+        self.opponents.ours = self.history.get(me, [])[-8:]  # before today's records are added
         for name in sorted(roster - {me}):
             self.opponents.observe(name, records.get(name), self.history.get(name, []),
                                    forecast, self.history, rules.spots)
@@ -212,6 +213,7 @@ class Brain:
     def scenarios(self, state, rules, counts, rng):
         """Joint rival placements and customer uncertainty, shared across candidate orders."""
         me = identity(state.get('you') or {})
+        self.opponents.ours = self.history.get(me, [])[-8:]
         roster = [identity(t) for t in state.get('trucks') or [] if identity(t) != me]
         fc = state.get('forecast') or {}
         odds = weather_probs(fc)
