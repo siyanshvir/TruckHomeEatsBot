@@ -81,7 +81,7 @@ Three coarse knobs, each an independent discounted Thompson-sampling bandit over
 with realized daily profit relative to the model's own prediction (so it learns *which settings the
 model over/under-trusts*, not noise):
 - `price_aggr` ∈ {0.90, 1.00, 1.10}: scales the demand-side calibrated price headroom;
-- `breadth` ∈ {0.0, 0.5, 1.0}: weight on the competition penalty/exploration;
+- `breadth` ∈ {0.0, 0.5, 0.75} (1.0 dropped: worse by about 2.2 se in the sweeps): weight on the competition penalty/exploration;
 - `risk` ∈ {0.03, 0.10, 0.30}: expected-loss weight (final default prior centered near 0.10;
   the final ranks an average over many days, so near risk-neutral is correct in expectation, while
   recent losing streaks raise it temporarily).

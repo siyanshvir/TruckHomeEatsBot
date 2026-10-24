@@ -31,7 +31,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_positive_reward_shifts_choices(self):
         c = MetaController(seed=2)
-        target = Knobs(1.10, 1.0, 0.03)
+        target = Knobs(1.10, 0.75, 0.03)
         for _ in range(40):
             c.update(target, 30.); c.update(Knobs(1.0, 0.5, 0.10), -10.)
         picks = [c.choose() for _ in range(200)]
@@ -40,7 +40,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_discounting_readapts(self):
         c = MetaController(seed=4)
-        a, b = Knobs(1.10, 1.0, 0.30), Knobs(0.90, 0.0, 0.03)
+        a, b = Knobs(1.10, 0.75, 0.30), Knobs(0.90, 0.0, 0.03)
         for _ in range(60):
             c.update(a, 25.)
         self.assertEqual(c.choose(greedy=True), a)
@@ -71,7 +71,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_new_market_keeps_means_but_loosens(self):
         c = MetaController(seed=8)
-        t = Knobs(1.10, 1.0, 0.30)
+        t = Knobs(1.10, 0.75, 0.30)
         for _ in range(30):
             c.update(t, 20.)
         before = c.means()['risk'][2]; var = c.posterior(c.arms['risk'][2])[1]

@@ -22,7 +22,7 @@ class Knobs(NamedTuple):
     risk: float
 
 
-ARMS = {'price_aggr': (0.90, 1.00, 1.10), 'breadth': (0.0, 0.5, 1.0), 'risk': (0.03, 0.10, 0.30)}
+ARMS = {'price_aggr': (0.90, 1.00, 1.10), 'breadth': (0.0, 0.5, 0.75), 'risk': (0.03, 0.10, 0.30)}
 NAMES = tuple(ARMS)
 DEFAULT = Knobs(1.00, 0.5, 0.10)
 GAMMA = 0.97          # evidence discount per update
