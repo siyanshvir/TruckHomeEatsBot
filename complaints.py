@@ -66,6 +66,11 @@ class Complaints:
     def recent(self, market, day):
         return sum(1 for m, d, _ in self.filed if m == market and day - d < WINDOW_DAYS)
 
+    @staticmethod
+    def days_left(state):
+        """Days after the one being ordered: the dent starts next day, so none is left on the last day."""
+        return max(0, int(state.get('days') or 0) - int(state.get('order_for_day') or state.get('day') or 0))
+
     def analyse(self, state, brain, order, daily_profit):
         """Best target and its expected value, or a reason not to file."""
         market, day = tuple((state.get('mode'), state.get('market'))), int(state.get('order_for_day') or 0)
@@ -87,7 +92,7 @@ class Complaints:
         for target in likely:
             hit = brain.order_value(state, order, {target: .8})
             overlap = overlaps.get(target, 0.)
-            gain = (hit['profit'] - base['profit']) * PERSISTENCE
+            gain = (hit['profit'] - base['profit']) * min(PERSISTENCE, float(self.days_left(state)))
             ev = gain - p_catch * (loss + gain)
             row = {'target': target, 'gain': gain, 'overlap': overlap, 'ev': ev, 'loss': loss, 'p_catch': p_catch}
             if overlap >= OVERLAP_MIN and (best is None or ev > best['ev']):

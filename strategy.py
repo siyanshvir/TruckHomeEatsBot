@@ -147,6 +147,21 @@ class Brain:
         except Exception:
             pass
 
+    @staticmethod
+    def report_miss(check, prediction):
+        """Print how far the day missed and whether rivals explain it. Read-only."""
+        try:
+            if not check.get('order_matches') or check.get('surprise') or prediction.get('sales') is None:
+                return
+            miss = check['actual_sales'] - prediction['sales']
+            extra = check['actual_rivals'] - prediction['rivals']
+            print('  miss day %s: sales %+.0f (expected %.0f, got %.0f%s); rivals here %d vs %.1f expected (%+.1f); '
+                  'demand error %s' % (check['day'], miss, prediction['sales'], check['actual_sales'],
+                  ', sold out' if check.get('sellout') else '', check['actual_rivals'], prediction['rivals'], extra,
+                  '%.0f' % check['demand_error'] if check.get('demand_error') is not None else '?'), flush=True)
+        except Exception:
+            pass
+
     def observe(self, state):
         self.register_new_spots(state)
         key = [state.get('mode'), state.get('market')]
@@ -215,6 +230,7 @@ class Brain:
             check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
                                      else abs(sold-prediction['demand'])) if matched else None
             self.prediction_checks = (self.prediction_checks + [check])[-48:]
+            self.report_miss(check, prediction)
             if self.final_policy is not None:
                 self.final_policy.observe_day(state, last, prediction, check, before.get(me))
             if matched and not check['surprise']:

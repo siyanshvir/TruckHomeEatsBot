@@ -96,6 +96,9 @@ def fallback(state):
                            'quality': 'standard', 'meals': max(0, meals)})
 
 
+STAFF_TRIES = 4   # a failed crew request is retried on later polls, a few times per night
+
+
 class Runner:
     def __init__(self, client, brain, checkpoint=None, log=None, resume=True):
         self.client, self.brain = client, brain
@@ -108,6 +111,7 @@ class Runner:
         self.pending_features = None
         self.voted = set()
         self.staffed = set()
+        self.staff_tries = {}
         self.complained = set()
         self.couponed = set()
         self.reported = set()
@@ -339,16 +343,24 @@ class Runner:
         order = self.accepted_order
         if not order or key in self.staffed or not hasattr(self.brain, 'crew_plan'):
             return
-        self.staffed.add(key)
+        tries = self.staff_tries.get(key, 0) + 1
+        self.staff_tries[key] = tries
+        if tries >= STAFF_TRIES:
+            self.staffed.add(key)    # bounded: stop retrying this night
         try:
             plan = self.brain.crew_plan(state, order)
             if not plan:
+                self.staffed.add(key)
                 return
             note = 'unchanged'
             if plan['change']:
                 status, _ = self.client.call('POST', base + '/staff',
                                              {'staff': plan['headcount'], 'wage': plan['wage']}, timeout=5.)
                 note = 'set (HTTP %s)' % status
+                if status != 200:
+                    print('  crew not set (HTTP %s), attempt %d of %d' % (status, tries, STAFF_TRIES), flush=True)
+                    return
+            self.staffed.add(key)
             self.brain.diagnostics['crew'] = plan
             print('  crew %s: %d at $%.2f (was %d at $%.2f); need %d for %d meals; P(enough) %.0f%%; '
                   'expected wages $%.0f; poach %.1f%%/exposed rival, %d exposed; pool ask median %s, %s unemployed' %
