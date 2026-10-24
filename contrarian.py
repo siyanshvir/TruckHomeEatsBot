@@ -15,8 +15,8 @@ from strategy import BUDGET, COST, INF, QUALITIES, SPOTS, VALUE, Brain, _num, ev
     fluid, build_segments, rep_factor, weather_probs
 
 CONTRARIAN = {
-    "upcharge": 0.75,       # dollars added on top of the model's best price at the quiet spot
-    "upcharge_pct": 0.05,   # ...plus this share of that price
+    "upcharge": 0.50,       # dollars added on top of the model's best price at the quiet spot
+    "upcharge_pct": 0.0,    # ...plus this share of that price
     "sellout": 0.25,        # order the meals we'd sell on a day this slow (quantile of demand)
     "min_crowd": 0.6,       # skip spots expected to draw under this share of the average spot's crowd
 }

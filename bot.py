@@ -3,6 +3,7 @@
     export NIGHTSHIFT_KEY=fk_your_key_here
     python3 bot.py              # play the live game (leave it running)
     python3 bot.py --practice   # play a private practice market and print your profit
+    python3 bot.py --contrarian # least crowded spot, small upcharge (contrarian.py)
 
 The strategy lives in strategy.py (see its docstring); sim.py is an offline simulator for tuning it.
 """
