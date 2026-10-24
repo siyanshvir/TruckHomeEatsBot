@@ -213,3 +213,11 @@ class DataDrivenCrewSearchTests(unittest.TestCase):
         heads, wages = model.search_space(s, 6., 2)
         self.assertLessEqual(max(heads), 3)
         self.assertLessEqual(max(wages), 9)
+
+
+class WageFloorTests(unittest.TestCase):
+    def test_wage_is_never_cut_below_the_games_default(self):
+        s = state(); s['rules'] = {'staff': {'wage_min': 5, 'wage_max': 60, 'default_wage': 6, 'staff_max': 10}}
+        model = CrewModel(); model.observe(s, 'me')
+        _, wages = model.search_space(s, 6., 2)
+        self.assertEqual(min(wages), 6.)

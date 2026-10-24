@@ -100,7 +100,8 @@ class CrewModel:
         expected-cost model decides inside this space, so spare staff and a higher wage are chosen only
         when the learned quit/poach risk pays for them."""
         rules = ((state.get('rules') or {}).get('staff')) or {}
-        low = float(rules.get('wage_min', WAGE_MIN))
+        # Never cut below the game's default wage: cutting to $5.50 made workers quit in the live game.
+        low = max(float(rules.get('wage_min', WAGE_MIN)), float(rules.get('default_wage') or 0.))
         cap = float(rules.get('wage_max', WAGE_MAX))
         seen = [float(t['wage']) for t in state.get('trucks') or [] if isinstance(t.get('wage'), (int, float))]
         spread = max(.3, (self.pool.get('median', 5.5) - self.pool.get('lowest', 4.5)) / 1.9) if self.pool else 1.
