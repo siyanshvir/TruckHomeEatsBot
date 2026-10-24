@@ -112,3 +112,26 @@ class RuleAdapterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CouponStrategyTests(unittest.TestCase):
+    def test_cost_doubles_with_each_drop_and_we_never_drop(self):
+        from rules_adapter import RuleAdapter
+        state = {'rules': {'coupons': {'cost': 20}}, 'you': {'coupons_dropped': []}}
+        self.assertEqual(RuleAdapter.coupon_cost(state), 20.)
+        state['you']['coupons_dropped'] = [{'day': 1}, {'day': 2}]
+        self.assertEqual(RuleAdapter.coupon_cost(state), 80.)
+        self.assertIsNone(RuleAdapter().coupon_action(state))
+        self.assertEqual(RuleAdapter.coupon_cost({}), 20.)     # missing fields: the base price
+
+    def test_the_tuner_is_not_punished_for_coupons_dropped_on_us(self):
+        from final_mode import FinalPolicy
+        policy = FinalPolicy()
+        rewards = []
+        class Controller:
+            def update(self, knobs, reward): rewards.append(reward)
+        policy.controller, policy.knob_day, policy.profit_mean = Controller(), 7, 200.
+        order = {'spot': 'oval', 'quality': 'standard', 'price': 9., 'meals': 60}
+        check = {'order_matches': True, 'order': order, 'actual_sales': 50., 'actual_profit': 150., 'sellout': False}
+        policy.observe_day({}, {'day': 7, 'you': {'coupon_loss': 40.}}, {'demand': 60., 'calibration': 1., 'profit': 200.}, check, {'oval': 60.})
+        self.assertEqual(rewards, [-10.])      # 150 + 40 lost to coupons, against a 200 running mean

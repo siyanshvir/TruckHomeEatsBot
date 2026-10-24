@@ -238,8 +238,17 @@ class RuleAdapter:
             return
 
     # ---- coupons / wrecks ----------------------------------------------------
+    @staticmethod
+    def coupon_cost(state):
+        """What our next drop would cost: $20 doubling with each drop we have already made."""
+        dropped = len(((state or {}).get('you') or {}).get('coupons_dropped') or [])
+        base = float(((state or {}).get('rules') or {}).get('coupons', {}).get('cost') or 20.)
+        return base * 2 ** dropped
+
     def coupon_action(self, state):
-        """Hook for offensive coupons. Defensive stance: always None until a measured gain exists."""
+        """Target to drop coupons on, or None. A drop lowers the target's revenue, not ours, and customers
+        do not move to us, so for our own average profit it is a pure cost (and doubles each time).
+        The only gain would be rank in a shared market, which the final does not score."""
         return None
 
     def is_wrecked(self, state):

@@ -204,7 +204,7 @@ class FinalPolicy:
         if (self.controller is not None and self.knob_day == last.get('day')
                 and check.get('actual_profit') is not None):
             knobs = Knobs(**self.knobs) if Knobs is not None else None
-            actual = float(check['actual_profit'])
+            actual = float(check['actual_profit']) + float(((last or {}).get('you') or {}).get('coupon_loss') or 0.)
             if knobs is not None:
                 # Reward beats a running mean of real profit, which no knob can inflate by deflating the forecast.
                 baseline = self.profit_mean if self.profit_mean is not None else actual
