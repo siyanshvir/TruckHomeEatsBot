@@ -94,3 +94,17 @@ class ForecastLogTests(unittest.TestCase):
         first, second = make_brain(samples=4), make_brain(samples=8)
         self.assertEqual(first.decide(state), second.decide(state))
         self.assertNotEqual(first.forecast_record['forecast_id'], second.forecast_record['forecast_id'])
+
+
+class LedgerTailTests(unittest.TestCase):
+    def test_duplicates_are_caught_from_the_tail_without_parsing_the_whole_file(self):
+        import json, tempfile
+        from pathlib import Path
+        import forecast_log
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'ledger.jsonl'
+            for i in range(40):
+                self.assertTrue(forecast_log.append_unique(path, {'forecast_id': 'id%d' % i, 'pad': 'x' * 50}))
+            self.assertFalse(forecast_log.append_unique(path, {'forecast_id': 'id39'}))   # latest row: caught
+            self.assertEqual(len(path.read_text().splitlines()), 40)
+            self.assertTrue(forecast_log.append_unique(path, {'forecast_id': 'brand-new'}))

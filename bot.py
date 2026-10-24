@@ -273,6 +273,8 @@ class Runner:
 
     def vote(self, state, base):
         """Cast at most one cautious vote per election, after the order is safely handled."""
+        if state.get('you') is None:
+            return  # showcase: not a playing truck
         election = (state.get('politics') or {}).get('election') or {}
         key = (state.get('mode'), state.get('market'), election.get('id'))
         order = self.accepted_order or getattr(self.brain, 'last_order', None)
@@ -290,6 +292,8 @@ class Runner:
 
     def complain(self, state, base):
         """Rarely file a health complaint (final only unless forced), after the order is accepted."""
+        if state.get('you') is None:
+            return  # showcase: not a playing truck
         policy = getattr(self.brain, 'final_policy', None)
         key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
         if (policy is None or not getattr(self.brain, 'final_active', False) or not self.accepted_order
@@ -309,6 +313,8 @@ class Runner:
 
     def staff(self, state, base):
         """Set tomorrow's crew once per night, after the order is accepted."""
+        if state.get('you') is None:
+            return  # showcase: not a playing truck
         key = (state.get('mode'), state.get('market'), state.get('order_for_day'))
         order = self.accepted_order
         if not order or key in self.staffed or not hasattr(self.brain, 'crew_plan'):

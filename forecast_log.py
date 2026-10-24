@@ -99,13 +99,22 @@ def capture(state, order, scenarios, named_rivals, model, diagnostics=None):
     return json.loads(json.dumps(record, allow_nan=False))
 
 
+TAIL_BYTES, TAIL_ROWS = 2_000_000, 8
+
+
 def append_unique(path, record, field='forecast_id'):
     path = Path(path)
     needs_newline = False
     if path.exists():
-        contents = path.read_text()
+        # Duplicates only ever repeat the latest rows, so read just the tail. Parsing the whole ledger on
+        # every order grows with the file (about 100 MB over a final) and would eat the next night's window.
+        with path.open('rb') as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - TAIL_BYTES))
+            contents = handle.read().decode('utf-8', 'ignore')
         needs_newline = bool(contents and not contents.endswith('\n'))
-        for line in contents.splitlines():
+        for line in contents.splitlines()[-TAIL_ROWS:]:
             try:
                 existing = json.loads(line)
             except ValueError:
