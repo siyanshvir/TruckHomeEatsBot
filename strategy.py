@@ -31,6 +31,9 @@ class Brain:
         # Optional steering: never charge above price_cap; reward spots where rivals rarely park.
         self.price_cap, self.quiet_bonus = price_cap, float(quiet_bonus)
         self.small_crowds = bool(small_crowds)
+        # Optional adaptive policy for the final; it always observes (shadow learning) but only
+        # steers decisions while final_active. See final_mode.py.
+        self.final_policy, self.final_active, self._baseline = None, False, None
         # Per-spot multiplier on the low price ceilings, e.g. {'thompson': 1.10}.
         self.spot_price_lift = dict(spot_price_lift or {})
         self.low_price_caps = {'cheap': 5.50, 'standard': 7.00, 'premium': 8.50}
@@ -48,11 +51,24 @@ class Brain:
         self.forecast_record = None
         self.scenario_rivals = []
 
+    def use_final(self, active):
+        """Switch between the baseline policy and the adaptive final policy."""
+        active = bool(active and self.final_policy is not None)
+        if active == self.final_active:
+            return
+        if active:
+            self._baseline = (self.small_crowds, self.risk, dict(self.spot_price_lift), self.samples)
+            self.small_crowds, self.spot_price_lift = False, {}
+        elif self._baseline:
+            self.small_crowds, self.risk, self.spot_price_lift, self.samples = self._baseline
+        self.final_active = active
+
     def dump(self):
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
-                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom}
+                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom,
+                'final': self.final_policy.to_dict() if self.final_policy else None}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
@@ -60,6 +76,8 @@ class Brain:
         self.prediction_checks = data.get('prediction_checks', [])
         self.crew = CrewModel(data.get('crew'))
         self.phantom = data.get('phantom') or self.bootstrap_phantom(self.prediction_checks)
+        if self.final_policy is not None and data.get('final'):
+            self.final_policy.restore(data['final'])
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
             setattr(self, key, data[key])
 
@@ -80,6 +98,8 @@ class Brain:
     def observe(self, state):
         key = [state.get('mode'), state.get('market')]
         if key != self.market:
+            if self.final_policy is not None:
+                self.final_policy.new_market()
             self.market = key
             self.seen = None
             self.reputations = {}
@@ -131,6 +151,8 @@ class Brain:
             check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
                                      else abs(sold-prediction['demand'])) if matched else None
             self.prediction_checks = (self.prediction_checks + [check])[-48:]
+            if self.final_policy is not None:
+                self.final_policy.observe_day(state, last, prediction, check, before.get(me))
             if matched and not check['surprise']:
                 self.phantom['exposures'] += 1
                 self.phantom['events'] += min(1., max(0., check['actual_rivals'] - prediction['rivals']))
@@ -304,6 +326,12 @@ class Brain:
             cap = min(cap, overheads.capacity)  # each employee serves 50 meals a day
         charged = overheads.charged(price)
         distributions = [demand_levels(state, rules, spot, quality, charged, scenario) for scenario in scenarios]
+        factor, adjust = 1., 0.
+        if self.final_active:
+            factor = self.final_policy.demand_factor(state, spot, quality, price, charged, rep)
+            adjust = self.final_policy.score_adjust(state, spot)
+            if factor != 1.:
+                distributions = [tuple(x * factor for x in d) for d in distributions]
         remaining = max(0, int(state.get('days', 30)) - int(state.get('order_for_day', 1)))
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
         best = None
@@ -325,11 +353,11 @@ class Brain:
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
             future = clamp(future, -25., 25.)
             exploration = 3. * min(1., remaining / 15.) * (1-self.learner.confidence(spot)) * sale_probability
-            score = profit - self.risk * loss + future + exploration
+            score = profit - self.risk * loss + future + exploration - adjust
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
-                        'demand': sum(demand) / n,
+                        'demand': sum(demand) / n, 'calibration': factor, 'score_adjust': adjust,
                         'expected_unsold': meals - mean,
                         'expected_salvage': (meals-mean)*cost*(.25 if flags['salvage'] else 0.),
                         'sellout_probability': sum(x >= meals for x in demand) / n if meals else 0.,
@@ -393,6 +421,8 @@ class Brain:
             state = dict(state, order_for_day=next_day)
         rules = Rules.read(state)
         counts = self.forecast(state, rules)
+        if self.final_active:
+            self.final_policy.begin(self, state)
         # Walking couples all campus crowds, but only eligible destinations can
         # become our order. Avoid expensive candidate searches that policy forbids.
         search_spots = rules.spots
@@ -456,6 +486,7 @@ class Brain:
                         'prediction': {'order': dict(order), 'sales': best['sales'],
                                        'features': active_features,
                                        'demand': best['demand'], 'profit': best['profit'],
+                                       'calibration': best.get('calibration', 1.),
                                        'rivals': sum(len(p[order['spot']]) for p, _, _, _ in scenarios)/len(scenarios)}}
         self.last_order = order
         ranked = []
