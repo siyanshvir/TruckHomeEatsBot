@@ -42,6 +42,21 @@ New spots register themselves (`game.register_spots`) from `RuleAdapter.normaliz
 3. Confirm the terminal prints `Profile: FINAL (adaptive)` when the first final state arrives.
 4. Crew: the saved crew setting seeds each market; the planner re-plans it every night.
 
+## Kill switches (all optional; defaults shown)
+| Switch | Effect |
+|---|---|
+| `NIGHTSHIFT_PROFILE=baseline` or `data/profile.json {"profile": "baseline"}` | Never use the adaptive profile; play the baseline (smallest-three rule, hand price caps) |
+| `NIGHTSHIFT_POSTURE=off` or `{"posture": "off"}` | Turn off the risk/roaming posture (already neutral in the final) |
+| `{"posture_final": "on"}` or `NIGHTSHIFT_POSTURE=final` | Allow the posture in final markets (off by default: lowered mean profit offline) |
+| `NIGHTSHIFT_COMPLAINTS=off` or `{"complaints": "off"}` | Never file health complaints (on by default in the final, filed only when expected value is clearly positive) |
+| `--profile final` | Use the adaptive profile even in the live game or practice (rehearsal) |
+The tuner (price/breadth/risk bandit) lives inside the final profile; `NIGHTSHIFT_PROFILE=baseline` turns the whole profile, tuner included, off.
+
+## Going into the final
+Run from this folder (it holds the freshest checkpoint and ledgers): `python3 bot.py --profile final`.
+At 8:30 AM the same process switches to final markets by itself; the first final state resets the tuner,
+competition model and rule residuals once. Keep exactly one bot running.
+
 ## Showcase and non-playing trucks
 After the ranking only the top 4 trucks play a `showcase` market; every other truck sees `you: null`
 and its orders get 403. The runner waits (no decide, no POST) while `you` is null, and `showcase`
