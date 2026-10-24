@@ -72,12 +72,18 @@ class Market:
             rng = random.Random('%s/%s/%s' % (self.seed, self.day, name))
             if self.style == 'crowd':
                 spot = max(forecast, key=forecast.get)
+            elif self.style == 'follower':
+                mine = (self.last or {}).get('you') or {}
+                spot = mine.get('spot') or max(forecast, key=forecast.get)
             elif self.style == 'moving':
                 spot = rng.choices(SPOTS, weights=[forecast[s]+20 for s in SPOTS])[0]
             else:
                 spot = SPOTS[index % 6] if rng.random() < .7 else rng.choice(SPOTS)
             if self.style == 'brutal':
                 orders[name] = self.brutal_order(index, name, forecast, rng)
+                continue
+            if self.style == 'follower':
+                orders[name] = self.follower_order(spot, rng)
                 continue
             quality = ('premium', 'standard', 'cheap')[index % 3]
             price = {'premium': 9.25, 'standard': 7.25, 'cheap': 5.25}[quality]
@@ -95,6 +101,20 @@ class Market:
             orders[name] = {'spot': spot, 'quality': quality, 'price': round(price, 2),
                             'meals': int(500/COSTS[quality]) if index % 2 == 0 else 55}
         return orders
+
+    def follower_order(self, spot, rng):
+        """Parks where we parked yesterday and undercuts our last price by $1.5-3.5 with a matching
+        standard/premium truck. Uses only public data; falls back to a mid price before it sees us."""
+        mine = (self.last or {}).get('you') or {}
+        quality = 'premium' if mine.get('quality') == 'premium' or not mine else 'standard'
+        floor = COSTS[quality] + .5
+        if mine.get('price') is not None:
+            price = float(mine['price']) - rng.uniform(1.5, 3.5)
+        else:
+            price = {'premium': 9., 'standard': 7.}[quality]
+        price = round(min(30., max(floor, 1., price)), 2)
+        return {'spot': spot, 'quality': quality, 'price': price,
+                'meals': 90 if quality == 'premium' else 110}
 
     def brutal_order(self, index, name, forecast, rng):
         """Aggressive premium rivals: campers, a hunter that shadows and undercuts us, a copycat of
