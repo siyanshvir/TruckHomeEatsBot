@@ -216,6 +216,7 @@ class Brain:
         remaining = max(0, int(state.get('days', 30)) - int(state.get('order_for_day', 1)))
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
         best = None
+        inventory_options = []
         n = len(distributions)
         quiet = sum(1 for placement, _, _, _ in scenarios if not placement[spot]) / max(1, n)
         # Every feasible integer inventory is considered, including zero.
@@ -236,12 +237,32 @@ class Brain:
             score = profit - self.risk * loss + future + exploration
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
-            if best is None or score > best['score']:
-                best = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
+            candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
                         'demand': sum(demand) / n,
                         'expected_unsold': meals - mean,
                         'sellout_probability': sum(x >= meals for x in demand) / n if meals else 0.,
                         'order': {'spot': spot, 'quality': quality, 'price': price, 'meals': meals}}
+            inventory_options.append(candidate)
+            if best is None or score > best['score']:
+                best = candidate
+        if self.small_crowds and best['order']['meals'] > 0 and best['profit'] > 0:
+            base_meals = best['order']['meals']
+            extra_limit = min(5, max(1, math.ceil(base_meals * .08)))
+            tolerance = min(2., .03 * best['profit'])
+            supported = []
+            for option in inventory_options:
+                extra = option['order']['meals'] - base_meals
+                extra_sales = option['sales'] - best['sales']
+                if (0 < extra <= extra_limit and extra_sales >= .60 * extra - 1e-9
+                        and extra_sales * price >= .90 * extra * cost
+                        and option['profit'] >= best['profit'] - tolerance
+                        and option['score'] >= best['score'] - tolerance
+                        and option['loss'] <= best['loss'] + 2.):
+                    supported.append(option)
+            if supported:
+                best = max(supported, key=lambda r: r['order']['meals'])
+                best = dict(best, inventory_cushion=best['order']['meals']-base_meals,
+                            base_meals=base_meals)
         return best
 
     def location_restriction(self, results, counts, spots):

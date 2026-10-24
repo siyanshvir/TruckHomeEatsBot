@@ -4,9 +4,35 @@ from game import expected_sales, _customer_segments, VALUES
 from learning import Learner
 from strategy import Brain
 from sim import Market
+from game import Rules, SPOTS
 
 
 class ForecastingTests(unittest.TestCase):
+    def inventory(self, crowds, constrained=True):
+        state = Market('cushion', rivals=3, days=3).state()
+        state['order_for_day'] = state['days']
+        state['trucks'] = [{'id': 'us'}]
+        placements = {s: [] for s in SPOTS}
+        models = {s: (100, 1, (0, 0, 1)) for s in SPOTS}
+        scenarios = [(placements, dict.fromkeys(SPOTS, crowd), models, 3.) for crowd in crowds]
+        return Brain(samples=4, small_crowds=constrained).evaluate(
+            state, Rules.read(state), 'oval', 'premium', 8.5, scenarios)
+
+    def test_small_inventory_cushion_requires_predicted_additional_sales(self):
+        baseline = self.inventory([30]*4+[35]*6, constrained=False)
+        increased = self.inventory([30]*4+[35]*6)
+        self.assertEqual(baseline['order']['meals'], 30)
+        self.assertGreater(increased['order']['meals'], 30)
+        self.assertLessEqual(increased['order']['meals'], 33)
+        self.assertGreater(increased['sales'], baseline['sales'])
+        self.assertGreaterEqual(increased['profit'], baseline['profit']-2.)
+        self.assertEqual(increased['order']['price'], baseline['order']['price'])
+
+    def test_no_extra_inventory_when_demand_is_exhausted_or_zero(self):
+        self.assertEqual(self.inventory([30]*10)['order']['meals'], 30)
+        self.assertEqual(self.inventory([0]*10)['order']['meals'], 0)
+        self.assertNotIn('inventory_cushion', self.inventory([30]*10))
+
     def test_variability_learns_without_turning_bias_into_noise(self):
         stable, variable = Learner(), Learner()
         forecast = {'weather': {'clear': 1}, 'expected_customers': {'oval': 100}}

@@ -70,6 +70,12 @@ statistics accumulate from newly observed forecast/result pairs. Production
 evaluates 32 joint scenarios by default. Cached customer preference calculations
 reuse work across crowd levels while retaining finite stock and overflow rules.
 Quantity is still optimized, with no automatic stock increase after a sellout.
+Production can then add a forecast-supported inventory cushion of up to 8%
+(rounded up, capped at five meals). At least 60% of the extra meals must be
+predicted to sell, with expected extra revenue covering at least 90% of their
+ingredient cost. Expected profit and score may each fall by at most $2 or 3%
+of the base expected profit, whichever is smaller; extra expected downside loss
+is limited to $2. Exhausted demand and zero-food choices receive no cushion.
 
 Plans now persist expected sales, uncapped demand, profit, and rival counts.
 Completed results are matched to those plans once, including across restarts.
