@@ -9,13 +9,15 @@ class Overheads:
         you = state.get('you') or {}
         self.salvage = salvage
         self.fixed = 0.
-        self.capacity = None
+        self.wage, self.per, self.capacity = 0., 50, None
         if flags.get('staff') and isinstance(you.get('staff'), dict):
             crew = you['staff']
-            employees = crew.get('employees', crew.get('target', 0)) or 0
-            self.fixed += float(employees) * float(crew.get('wage', 0) or 0)
-            if crew.get('capacity') is not None:
-                self.capacity = int(crew['capacity'])
+            staff_rules = (state.get('rules') or {}).get('staff') or {}
+            self.per = max(1, int(staff_rules.get('meals_per_employee') or 50))
+            self.wage = float(crew.get('wage', staff_rules.get('default_wage', 0)) or 0)
+            # Tomorrow's crew is set tonight, so today's crew is not a limit on tomorrow's order: wages follow
+            # the meals cooked (one employee per 50) and only the game's headcount maximum bounds the order.
+            self.capacity = int(staff_rules.get('staff_max') or 10) * self.per
         if flags.get('moving_costs') and you.get('last_spot') not in (None, spot):
             table = (state.get('rules') or {}).get('move_costs') or {}
             self.fixed += float((table.get(you['last_spot']) or {}).get(spot, 0))
@@ -30,5 +32,6 @@ class Overheads:
         if not meals:
             return 0.
         charged = self.charged(price)
+        wages = self.wage * max(1, -(-int(meals) // self.per))  # employees needed for these meals
         return (food_profit(sales, meals, charged, cost, self.salvage)
-                + law_profit(self.terms, sales, charged, quality) - self.fixed)
+                + law_profit(self.terms, sales, charged, quality) - self.fixed - wages)
