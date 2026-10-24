@@ -147,3 +147,18 @@ class FollowTests(unittest.TestCase):
         model = OpponentModel()
         experts, _, _ = model.price_experts('r', [], {}, {}, 'standard', 'oval')
         self.assertEqual(experts[4], experts[0])
+
+
+class PopulationPriorTests(unittest.TestCase):
+    def test_new_rival_starts_from_what_other_rivals_have_shown(self):
+        from opponents import OpponentModel, NEW_EXPERT_LOG_WEIGHT, FOLLOW_DEPTH_PRIOR
+        model = OpponentModel()
+        fresh = model.entry('first')
+        self.assertEqual(fresh['location'][-1], NEW_EXPERT_LOG_WEIGHT)
+        self.assertEqual(fresh['follow_depth'], FOLLOW_DEPTH_PRIOR)
+        for name in ('a', 'b'):  # two rivals that clearly follow us and undercut by about 3
+            e = model.entry(name)
+            e['scored'], e['location'][-1], e['follow_depth'], e['follow_n'] = 6, 0., 3., 2
+        newcomer = model.entry('newcomer')
+        self.assertGreater(newcomer['location'][-1], NEW_EXPERT_LOG_WEIGHT)
+        self.assertAlmostEqual(newcomer['follow_depth'], 3., places=6)

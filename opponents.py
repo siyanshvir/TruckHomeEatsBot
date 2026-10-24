@@ -48,16 +48,29 @@ class OpponentModel:
         self.data = data or {}
         self.ours = []  # our own recent records, oldest first: what a rival that follows us has seen
 
+    def population(self):
+        """Average follow weight and undercut depth over rivals with enough evidence: a new rival's prior."""
+        weights, depths = [], []
+        for e in self.data.values():
+            if len(e.get('location', ())) == len(LOCATION_MODELS) and e.get('scored', 0) >= 3:
+                weights.append(e['location'][-1])
+            if e.get('follow_n', 0) > 0:
+                depths.append(e['follow_depth'])
+        return (sum(weights)/len(weights) if weights else NEW_EXPERT_LOG_WEIGHT,
+                sum(depths)/len(depths) if depths else FOLLOW_DEPTH_PRIOR)
+
     def entry(self, name):
-        e = self.data.setdefault(name, {'location': [0.]*(len(LOCATION_MODELS)-1) + [NEW_EXPERT_LOG_WEIGHT],
-                                       'price': [0.]*(len(PRICE_MODELS)-1) + [NEW_EXPERT_LOG_WEIGHT],
+        start, depth = self.population() if name not in self.data else (NEW_EXPERT_LOG_WEIGHT, FOLLOW_DEPTH_PRIOR)
+        e = self.data.setdefault(name, {'location': [0.]*(len(LOCATION_MODELS)-1) + [min(0., start)],
+                                       'price': [0.]*(len(PRICE_MODELS)-1) + [min(0., start)],
                                        'active': 0., 'absent': 0., 'scored': 0,
                                        'log_loss': 0., 'repeat_log_loss': 0.,
                                        'price_count': 0, 'price_error': 0., 'repeat_price_error': 0.})
         # Checkpoints saved before the follow behavior existed keep their weights.
         for key, names in (('location', LOCATION_MODELS), ('price', PRICE_MODELS)):
             e[key] = list(e[key]) + [NEW_EXPERT_LOG_WEIGHT]*(len(names)-len(e[key]))
-        e.setdefault('follow_depth', FOLLOW_DEPTH_PRIOR)
+        e.setdefault('follow_depth', depth)
+        e.setdefault('follow_n', 0)
         return e
 
     def attendance(self, name):
@@ -161,7 +174,8 @@ class OpponentModel:
         if self.ours and record['spot'] == self.ours[-1].get('spot') and record['quality'] == self.ours[-1].get('quality'):
             low, high = FOLLOW_DEPTH_RANGE
             depth = clamp(float(self.ours[-1]['price']) - float(record['price']), low, high)
-            e['follow_depth'] = .5*e['follow_depth'] + .5*depth
+            e['follow_depth'] = depth if not e['follow_n'] else .5*e['follow_depth'] + .5*depth
+            e['follow_n'] += 1
         if history:
             quality = record['quality']
             experts, spread, _ = self.price_experts(name, history, forecast, histories, quality, record['spot'])
