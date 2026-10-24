@@ -242,8 +242,8 @@ class RuleAdapter:
     def coupon_cost(state):
         """What our next drop would cost: $20 doubling with each drop we have already made."""
         dropped = len(((state or {}).get('you') or {}).get('coupons_dropped') or [])
-        base = float(((state or {}).get('rules') or {}).get('coupons', {}).get('cost') or 20.)
-        return base * 2 ** dropped
+        terms = ((state or {}).get('rules') or {}).get('coupons') or {}
+        return float(terms.get('cost') or 20.) * float(terms.get('growth') or 2.) ** dropped
 
     def coupon_action(self, state):
         """Target to drop coupons on, or None. A drop lowers the target's revenue, not ours, and customers

@@ -12,7 +12,9 @@ class Overheads:
         self.wage, self.per, self.capacity = 0., 50, None
         # Coupons dropped on us and not yet used: each puts 20% of our buyers at half price (stacking to 60%).
         pending = sum(1 for c in (you.get('coupons') or []) if isinstance(c, dict) and c.get('applied_day') is None)
-        self.coupon_factor = 1. - .5 * min(.6, .2 * pending)
+        terms = (state.get('rules') or {}).get('coupons') or {}   # the API states share, cap and discount
+        share, cap, off = (float(terms.get(k, d)) for k, d in (('share', .2), ('max_share', .6), ('off', .5)))
+        self.coupon_factor = 1. - off * min(cap, share * pending)
         if flags.get('staff') and isinstance(you.get('staff'), dict):
             crew = you['staff']
             staff_rules = (state.get('rules') or {}).get('staff') or {}
