@@ -18,12 +18,14 @@ from overheads import Overheads
 
 
 class Brain:
-    def __init__(self, learner=None, seed=42, samples=12, risk=.15, price_cap=None, quiet_bonus=0., small_crowds=False):
+    def __init__(self, learner=None, seed=42, samples=12, risk=.15, price_cap=None, quiet_bonus=0., small_crowds=False, spot_price_lift=None):
         self.learner = learner or Learner()
         self.seed, self.samples, self.risk = seed, max(4, int(samples)), float(risk)
         # Optional steering: never charge above price_cap; reward spots where rivals rarely park.
         self.price_cap, self.quiet_bonus = price_cap, float(quiet_bonus)
         self.small_crowds = bool(small_crowds)
+        # Per-spot multiplier on the low price ceilings, e.g. {'thompson': 1.10}.
+        self.spot_price_lift = dict(spot_price_lift or {})
         self.low_price_caps = {'cheap': 5.50, 'standard': 7.00, 'premium': 8.50}
         self.market = None
         self.seen = None
@@ -282,6 +284,11 @@ class Brain:
                             base_meals=base_meals)
         return best
 
+    def ceiling(self, rules, spot, quality, rep):
+        cap = self.low_price_caps[quality] * self.spot_price_lift.get(spot, 1.) if self.small_crowds else rules.price_max
+        return min(rules.price_max, self.price_cap or rules.price_max, cap,
+                   reputation_value(quality, rep, rules.values))
+
     def location_restriction(self, results, counts, spots):
         if not self.small_crowds:
             return {'best': max(results, key=lambda r: r['score']), 'enabled': False}
@@ -329,9 +336,7 @@ class Brain:
             coverage[spot] = []
             for quality in QUALITIES:
                 coverage[spot].append(quality)
-                ceiling = min(rules.price_max, self.price_cap or rules.price_max,
-                              self.low_price_caps[quality] if self.small_crowds else rules.price_max,
-                              reputation_value(quality, rep, rules.values))
+                ceiling = self.ceiling(rules, spot, quality, rep)
                 low = max(rules.price_min, rules.costs[quality] + .25,
                           7.25 if self.small_crowds and quality == 'premium' else rules.price_min)
                 # Coarse prices plus value-equivalent rival thresholds; prices above
@@ -361,9 +366,7 @@ class Brain:
             top = max(local, key=lambda r: r['score'])
             quality, base = top['order']['quality'], top['order']['price']
             rep = float((state.get('you') or {}).get('reputation', {}).get(spot, 50))
-            ceiling = min(rules.price_max, self.price_cap or rules.price_max,
-                              self.low_price_caps[quality] if self.small_crowds else rules.price_max,
-                              reputation_value(quality, rep, rules.values))
+            ceiling = self.ceiling(rules, spot, quality, rep)
             for step in (-.5, -.25, .25, .5):
                 price = round(base + step, 2)
                 floor = max(rules.price_min, rules.costs[quality]+.01,

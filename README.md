@@ -24,7 +24,8 @@ larger, and its risk-adjusted score is also better. The three busier spots are
 excluded regardless of their predicted profit. Event/weather effects are already
 included in the supplied forecast counts used for this ranking.
 
-Price ceilings are **$5.50 cheap, $7 standard, $8.50 premium**. The optimizer can
+Price ceilings are **$5.50 cheap, $7 standard, $8.50 premium**. Thompson's ceilings are 10% higher ($6.05, $7.70, $9.35) via `spot_price_lift`.
+The optimizer can
 charge less when supported by its sales forecast, with a $7.25 premium floor.
 Production uses an additional downside-loss weight of 0.08 (previously 0.15);
 all inventory still pays full ingredient costs, including unsold meals, and

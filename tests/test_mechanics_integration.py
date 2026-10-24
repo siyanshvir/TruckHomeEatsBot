@@ -35,7 +35,7 @@ class MechanicsIntegrationTests(unittest.TestCase):
         Rules.read(state).validate(order)
         allowed = sorted(SPOTS, key=lambda s: state['forecast']['expected_customers'][s])[:3]
         self.assertIn(order['spot'], allowed)
-        self.assertLessEqual(order['price'], brain.low_price_caps[order['quality']])
+        self.assertLessEqual(order['price'], brain.low_price_caps[order['quality']] * brain.spot_price_lift.get(order['spot'], 1.) + 1e-9)
         self.assertEqual(brain.learner.active_features, (True, True, True))
         rows = brain.forecast_record['scenarios']
         self.assertAlmostEqual(sum(r['profit'] for r in rows)/len(rows), brain.diagnostics['chosen']['profit'])

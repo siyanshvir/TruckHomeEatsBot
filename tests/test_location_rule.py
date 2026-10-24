@@ -41,9 +41,9 @@ class SmallCrowdRuleTests(unittest.TestCase):
         state['forecast']['expected_customers'] = self.counts
         order = brain.decide(state)
         self.assertIn(order['spot'], ['stadium', 'northres', 'oval'])
-        self.assertLessEqual(order['price'], brain.low_price_caps[order['quality']])
+        self.assertLessEqual(order['price'], brain.low_price_caps[order['quality']] * brain.spot_price_lift.get(order['spot'], 1.) + 1e-9)
         for row in brain.diagnostics['ranking']:
-            self.assertLessEqual(row['order']['price'], brain.low_price_caps[row['order']['quality']])
+            self.assertLessEqual(row['order']['price'], brain.low_price_caps[row['order']['quality']] * brain.spot_price_lift.get(row['order']['spot'], 1.) + 1e-9)
             if row['order']['quality'] == 'premium':
                 self.assertGreaterEqual(row['order']['price'], 7.25)
         self.assertEqual(brain.risk, .08)

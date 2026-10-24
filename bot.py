@@ -69,7 +69,8 @@ def make_brain(model=None, samples=32, small_crowds=True):
     # Inventory still pays full ingredient/waste costs in expected profit; ease
     # only the additional downside penalty to permit supported demand growth.
     return Brain(learner=learner, samples=samples, small_crowds=small_crowds,
-                 risk=.08 if small_crowds else .15)
+                 risk=.08 if small_crowds else .15,
+                 spot_price_lift={'thompson': 1.10})
 
 
 def fallback(state):
