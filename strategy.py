@@ -12,6 +12,7 @@ from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
                   spot_results, weather_factor, weather_probs)
 from learning import Learner
 from opponents import OpponentModel, context
+from forecast_log import capture
 
 
 class Brain:
@@ -31,6 +32,8 @@ class Brain:
         self.diagnostics = {}
         self.opponents = OpponentModel()
         self.prediction_checks = []
+        self.forecast_record = None
+        self.scenario_rivals = []
 
     def dump(self):
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
@@ -75,6 +78,8 @@ class Brain:
             matched = all(own.get(k) == v for k, v in order.items())
             sold = float(own.get('sold', 0))
             check = {'mode': key[0], 'market': key[1], 'day': last['day'],
+                     'forecast_id': prediction.get('forecast_id'),
+                     'rules_digest': prediction.get('rules_digest'), 'regime_id': prediction.get('regime_id'),
                      'order': order, 'order_matches': matched,
                      'expected_sales': prediction['sales'], 'actual_sales': sold,
                      'expected_profit': prediction['profit'], 'actual_profit': own.get('profit'),
@@ -152,6 +157,7 @@ class Brain:
         kinds = events(fc.get('events'))
         field = [h[-1] for name, h in self.history.items() if name in roster and h]
         scenarios = []
+        self.scenario_rivals = []
         for index in range(self.samples):
             # Stratified weather sampling reduces random ranking fluctuations.
             target, acc = (index + .5) / self.samples, 0.
@@ -163,6 +169,7 @@ class Brain:
                     break
             placements = {s: [] for s in rules.spots}
             active = 0.
+            named = []
             for name in roster:
                 hist = self.history.get(name, [])
                 if rng.random() > self.opponents.attendance(name):
@@ -185,6 +192,8 @@ class Brain:
                 rep = self.reputations.get(name, {}).get(spot, 50.)
                 rep = clamp(rep + rng.gauss(0, 5 if hist else 12), 0, 100)
                 placements[spot].append((price, q, rep, meals))
+                named.append({'id': name, 'spot': spot, 'price': price,
+                              'quality': q, 'reputation': rep, 'meals': meals})
                 active += min(1., meals * rules.costs[q] / 250.)
             crowds, models = {}, {}
             for spot in rules.spots:
@@ -195,6 +204,7 @@ class Brain:
                 crowds[spot] = counts[spot] * conditional * correction * rng.uniform(1-width, 1+width)
                 models[spot] = customer_model(spot, kinds, self.learner.sample(spot, rng))
             scenarios.append((placements, crowds, models, active))
+            self.scenario_rivals.append(named)
         return scenarios
 
     def evaluate(self, state, rules, spot, quality, price, scenarios):
@@ -300,6 +310,7 @@ class Brain:
         counts = self.forecast(state, rules)
         digest = hashlib.sha256(repr((self.seed, self.market, state.get('order_for_day'))).encode()).digest()
         rng = random.Random(int.from_bytes(digest[:8], 'big'))
+        self.scenario_rivals = []
         scenarios = self.scenarios(state, rules, counts, rng)
         results, coverage = [], {}
         by_pair = {}
@@ -373,4 +384,22 @@ class Brain:
                                 self.history.get(identity(t), []), state.get('forecast') or {},
                                 self.history, rules.spots) for t in state.get('trucks') or []
                                 if identity(t) != identity(state.get('you') or {})}}
+        # Capture the same scenarios used for selection. This adds observability,
+        # not another sample or a change to order scoring.
+        evidence_model = dict(self.dump(), planner_config={
+            'seed': self.seed, 'samples': self.samples, 'risk': self.risk,
+            'small_crowds': self.small_crowds, 'price_cap': self.price_cap,
+            'quiet_bonus': self.quiet_bonus, 'low_price_caps': dict(self.low_price_caps)})
+        self.forecast_record = None
+        try:
+            self.forecast_record = capture(state, order, scenarios, self.scenario_rivals, evidence_model, self.diagnostics)
+            self.pending['prediction']['forecast_id'] = self.forecast_record['forecast_id']
+            self.pending['prediction']['rules_digest'] = self.forecast_record['rules_digest']
+            self.pending['prediction']['regime_id'] = self.forecast_record['regime_id']
+            self.diagnostics['risk'] = self.forecast_record['risk']
+            self.diagnostics['forecast_id'] = self.forecast_record['forecast_id']
+        except Exception as error:
+            # Observability must never replace a valid order with a fallback.
+            self.diagnostics['forecast_capture_error'] = type(error).__name__
+        self.diagnostics['elapsed'] = time.perf_counter()-started
         return order

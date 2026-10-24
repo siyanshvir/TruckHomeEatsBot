@@ -10,6 +10,7 @@ from game import Rules, SPOTS
 from learning import Learner
 from strategy import Brain
 from history import warm_start
+from forecast_log import append_unique
 
 ROOT = Path(__file__).resolve().parent
 
@@ -127,20 +128,43 @@ class Runner:
 
     def record(self, state, order):
         self.archive(state)
+        self.record_evaluation(state)
         if self.log:
             try:
                 Path(self.log).parent.mkdir(parents=True, exist_ok=True)
                 with open(self.log, 'a') as out:
                     out.write(json.dumps({'state': state, 'order': order, 'decision': self.brain.diagnostics}) + '\n')
+                frozen = getattr(self.brain, 'forecast_record', None)
+                if frozen and frozen['order'] == order:
+                    prefix = 'practice-' if state.get('mode') == 'practice' else ''
+                    append_unique(Path(self.log).parent/(prefix+'forecasts-v2.jsonl'),
+                                  dict(frozen, accepted_at=time.time(), accepted=True))
             except OSError:
                 print('Decision log write failed', flush=True)
         diag = self.brain.diagnostics
+        if diag.get('forecast_capture_error'):
+            print('Forecast evidence unavailable (%s)' % diag['forecast_capture_error'], flush=True)
         for result in diag.get('ranking', []):
             candidate = result['order']
             print('  %-9s %-8s $%5.2f x%3d predicted sales %.1f profit $%.0f' %
                   (candidate['spot'], candidate['quality'], candidate['price'], candidate['meals'],
                    result['sales'], result['profit']), flush=True)
         print('  chose %s; search %.3fs' % (order, diag.get('elapsed', 0)), flush=True)
+
+    def record_evaluation(self, state):
+        if not self.log:
+            return
+        last = state.get('last_day') or {}
+        for check in getattr(self.brain, 'prediction_checks', []):
+            if (check.get('forecast_id') and check.get('day') == last.get('day')
+                    and check.get('mode') == state.get('mode') and check.get('market') == state.get('market')):
+                try:
+                    prefix = 'practice-' if state.get('mode') == 'practice' else ''
+                    append_unique(Path(self.log).parent/(prefix+'evaluation-v2.jsonl'),
+                                  dict(check, schema_version=2, observed_at=time.time(),
+                                       actual_result=last.get('you'), actual_spots=last.get('spots')))
+                except OSError:
+                    print('Evaluation log write failed', flush=True)
 
     def play(self, base='/api/v1'):
         version, next_state, backoff = 0, None, .25
@@ -163,6 +187,7 @@ class Runner:
                 backoff = .25
                 if state.get('phase') == 'over' and state.get('mode') == 'practice':
                     self.brain.observe(state)
+                    self.record_evaluation(state)
                     self.save()
                     return state
                 key = [state.get('mode'), state.get('market'), state.get('order_for_day')]
@@ -174,6 +199,7 @@ class Runner:
                         self.brain.observe(state)
                         self.archive(state)
                         self.save()
+                    self.record_evaluation(state)
                     self.health(state)
                     continue
                 if key != self.pending_key:

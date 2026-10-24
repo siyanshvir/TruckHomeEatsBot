@@ -93,6 +93,29 @@ smallest-three rule, price bounds, and Price Wars rival models are retained.
 
 ## Learning and persistence
 
+The accepted-order ledger `data/forecasts-v2.jsonl` now freezes code/model hashes,
+rule settings, market identity, public reputations, and the exact sampled rival
+lineups used by each decision. It records sales/profit quantiles, loss frequency
+in those scenarios, worst-tail profit, and results conditional on named rivals
+being present. These are model diagnostics, not calibrated risk guarantees.
+`data/evaluation-v2.jsonl` joins later outcomes by forecast ID; practice uses
+separate files prefixed `practice-`. Both ledgers are append-only and deduplicated.
+Logging occurs after order acceptance, not before the time-critical POST.
+
+Run `python3 tools/review_day.py --day 14` for a local loss breakdown. For the
+experimental location-conditioned rival model, run
+`python3 tools/shadow_incumbent.py --day 14 --seeds 42 43 44`. This is an offline
+comparison using only prior days; it does not submit orders or change the live
+model. Its own optimistic predictions are not evidence of realized profit.
+See [the review process](docs/FORECASTING_PROCESS.md) for independent agent roles
+and validation requirements. Production retains its existing selection and
+pricing policy; no external framework or reinforcement-learning dependency is added.
+
+Rule and market fingerprints label changed observable settings. They cannot
+detect an unannounced change to hidden customer behavior by themselves. Future
+data must be assessed separately when the game changes; old live results and
+practice results are not proof that a candidate transfers to a new game.
+
 `model/prior.json` is trained from saved practice collection pairs. The initial
 420 training days and 120 held-out days come from disjoint markets. The holdout
 stays out of the shipped prior. Training and evaluation load no credentials.
