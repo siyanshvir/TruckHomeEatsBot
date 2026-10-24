@@ -264,7 +264,8 @@ class Brain:
                 ceiling = min(rules.price_max, self.price_cap or rules.price_max,
                               self.low_price_caps[quality] if self.small_crowds else rules.price_max,
                               reputation_value(quality, rep, rules.values))
-                low = max(rules.price_min, rules.costs[quality] + .25)
+                low = max(rules.price_min, rules.costs[quality] + .25,
+                          7.25 if self.small_crowds and quality == 'premium' else rules.price_min)
                 # Coarse prices plus value-equivalent rival thresholds; prices above
                 # rivals remain eligible to capture overflow and reputation advantages.
                 prices = {round(low + .75*k, 2) for k in range(int(max(0, ceiling-low) / .75)+1)}
@@ -297,7 +298,9 @@ class Brain:
                               reputation_value(quality, rep, rules.values))
             for step in (-.5, -.25, .25, .5):
                 price = round(base + step, 2)
-                if max(rules.price_min, rules.costs[quality]+.01) <= price <= ceiling:
+                floor = max(rules.price_min, rules.costs[quality]+.01,
+                            7.25 if self.small_crowds and quality == 'premium' else rules.price_min)
+                if floor <= price <= ceiling:
                     results.append(self.evaluate(state, rules, spot, quality, price, scenarios))
         if not results:
             raise ValueError('No legal candidates for supplied rules')

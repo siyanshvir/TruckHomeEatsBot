@@ -63,7 +63,10 @@ def atomic_json(path, value):
 def make_brain(model=None, samples=12, small_crowds=True):
     path = Path(model) if model else ROOT / 'model' / 'prior.json'
     learner = Learner.load(path) if path.exists() else Learner()
-    return Brain(learner=learner, samples=samples, small_crowds=small_crowds)
+    # Inventory still pays full ingredient/waste costs in expected profit; ease
+    # only the additional downside penalty to permit supported demand growth.
+    return Brain(learner=learner, samples=samples, small_crowds=small_crowds,
+                 risk=.08 if small_crowds else .15)
 
 
 def fallback(state):

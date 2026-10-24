@@ -44,6 +44,9 @@ class SmallCrowdRuleTests(unittest.TestCase):
         self.assertLessEqual(order['price'], brain.low_price_caps[order['quality']])
         for row in brain.diagnostics['ranking']:
             self.assertLessEqual(row['order']['price'], brain.low_price_caps[row['order']['quality']])
+            if row['order']['quality'] == 'premium':
+                self.assertGreaterEqual(row['order']['price'], 7.25)
+        self.assertEqual(brain.risk, .08)
 
     def test_fallback_obeys_bottom_two_and_standard_cap(self):
         state = Market('fallback', rivals=5, days=3).state()

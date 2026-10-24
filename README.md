@@ -25,7 +25,11 @@ excluded regardless of their predicted profit. Event/weather effects are already
 included in the supplied forecast counts used for this ranking.
 
 Price ceilings are **$5.50 cheap, $7 standard, $8.50 premium**. The optimizer can
-charge less when supported by its sales forecast. The fallback also uses the
+charge less when supported by its sales forecast, with a $7.25 premium floor.
+Production uses an additional downside-loss weight of 0.08 (previously 0.15);
+all inventory still pays full ingredient costs, including unsold meals, and
+quantities are optimized against forecast demand rather than automatically increased.
+The fallback also uses the
 bottom two and caps standard at $7. These are deliberate user constraints and
 can reduce achievable profit compared with unrestricted optimization.
 
