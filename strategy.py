@@ -474,8 +474,15 @@ class Brain:
                 thresholds.sort()
                 if thresholds:
                     prices.update(round(thresholds[int((len(thresholds)-1)*q)], 2) for q in (0., .25, .5, .75, 1.))
-                candidates = [self.evaluate(state, rules, spot, quality, price, scenarios)
-                              for price in sorted(prices) if low <= price <= ceiling]
+                legal = [price for price in sorted(prices) if low <= price <= ceiling]
+                if self.final_active and len(scenarios) >= 12 and len(legal) > 4:
+                    # Staged search keeps six spots inside the 2-second window: score every price on a
+                    # thin scenario subset, then re-score only the best two on all scenarios.
+                    thin = scenarios[::max(1, len(scenarios) // 6)]
+                    coarse = sorted(((self.evaluate(state, rules, spot, quality, price, thin)['score'], price)
+                                     for price in legal[::2] + [legal[-1]]), reverse=True)
+                    legal = sorted({price for _, price in coarse[:2]})
+                candidates = [self.evaluate(state, rules, spot, quality, price, scenarios) for price in legal]
                 if candidates:
                     result = max(candidates, key=lambda r: r['score'])
                     by_pair[spot, quality] = result
