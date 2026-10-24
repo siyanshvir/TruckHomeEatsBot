@@ -5,7 +5,8 @@ import math
 from pathlib import Path
 import time
 from game import Rules, identity
-from mechanics import features, food_profit, demand_levels
+from mechanics import features, demand_levels
+from overheads import Overheads
 
 
 def digest(value):
@@ -37,19 +38,20 @@ def capture(state, order, scenarios, named_rivals, model, diagnostics=None):
     rules = Rules.read(state)
     spot, quality, price, meals = (order[k] for k in ('spot', 'quality', 'price', 'meals'))
     flags = features(state.get('features'))
+    overheads = Overheads(state, spot, flags['salvage'])
     contribution = min(1., meals*rules.costs[quality]/250.)
     left = 0 if contribution <= .5 else 1
     fraction = contribution*2 if left == 0 else (contribution-.5)*2
     fc = state.get('forecast') or {}
     rows = []
     for index, (placements, crowds, models, active) in enumerate(scenarios):
-        demands = demand_levels(state, rules, spot, quality, price, (placements, crowds, models, active))
+        demands = demand_levels(state, rules, spot, quality, overheads.charged(price), (placements, crowds, models, active))
         demand = demands[left]*(1-fraction) + demands[left+1]*fraction
         sales = min(meals, demand)
         rows.append({'placements': placements, 'crowds': crowds, 'customer_models': models,
                      'active': active, 'rival_offers': named_rivals[index] if index < len(named_rivals) else [],
                      'demand': demand, 'sales': sales,
-                     'profit': food_profit(sales, meals, price, rules.costs[quality], flags['salvage'])})
+                     'profit': overheads.profit(sales, meals, price, quality, rules.costs[quality])})
     profits = [r['profit'] for r in rows]
     worst = sorted(profits)[:max(1, math.ceil(len(profits)*.2))]
     conditional = {}

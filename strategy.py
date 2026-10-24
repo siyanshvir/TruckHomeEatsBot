@@ -13,7 +13,8 @@ from game import (SPOTS, QUALITIES, PRIORS, COSTS, REP_CHANGE, Rules, clamp,
 from learning import Learner
 from opponents import OpponentModel, context
 from forecast_log import capture
-from mechanics import features, food_profit, demand_levels
+from mechanics import features, demand_levels
+from overheads import Overheads
 
 
 class Brain:
@@ -223,7 +224,11 @@ class Brain:
         cost = rules.costs[quality]
         cap = rules.capacity(quality)
         flags = features(state.get('features'))
-        distributions = [demand_levels(state, rules, spot, quality, price, scenario) for scenario in scenarios]
+        overheads = Overheads(state, spot, flags['salvage'])
+        if overheads.capacity is not None:
+            cap = min(cap, overheads.capacity)  # each employee serves 50 meals a day
+        charged = overheads.charged(price)
+        distributions = [demand_levels(state, rules, spot, quality, charged, scenario) for scenario in scenarios]
         remaining = max(0, int(state.get('days', 30)) - int(state.get('order_for_day', 1)))
         rep_delta = clamp(rep + REP_CHANGE[quality], 0, 100) - rep
         best = None
@@ -238,8 +243,8 @@ class Brain:
             demand = [d[left] * (1-fraction) + d[left+1] * fraction for d in distributions]
             sales = [min(meals, x) for x in demand]
             mean = sum(sales) / n
-            profit = food_profit(mean, meals, price, cost, flags['salvage'])
-            loss = sum(max(0., -food_profit(x, meals, price, cost, flags['salvage'])) for x in sales) / n
+            profit = overheads.profit(mean, meals, price, quality, cost)
+            loss = sum(max(0., -overheads.profit(x, meals, price, quality, cost)) for x in sales) / n
             # Small, bounded future benefit: no incentive to lose hundreds buying reputation.
             sale_probability = sum(x > .1 for x in sales) / n
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
@@ -266,7 +271,7 @@ class Brain:
                 extra = option['order']['meals'] - base_meals
                 extra_sales = option['sales'] - best['sales']
                 if (0 < extra <= extra_limit and extra_sales >= .60 * extra - 1e-9
-                        and extra_sales * price >= .90 * extra * cost
+                        and extra_sales * charged >= .90 * extra * cost
                         and option['profit'] >= best['profit'] - tolerance
                         and option['score'] >= best['score'] - tolerance
                         and option['loss'] <= best['loss'] + 2.):

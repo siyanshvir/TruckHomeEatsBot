@@ -12,6 +12,7 @@ from strategy import Brain
 from history import warm_start
 from forecast_log import append_unique
 from mechanics import features
+from politics import choose_vote
 
 ROOT = Path(__file__).resolve().parent
 
@@ -94,8 +95,10 @@ class Runner:
         self.checkpoint, self.log = checkpoint, log
         self.accepted = None
         self.accepted_features = None
+        self.accepted_order = None
         self.pending_key = self.pending_order = None
         self.pending_features = None
+        self.voted = set()
         if resume and checkpoint and Path(checkpoint).exists():
             try:
                 saved = json.loads(Path(checkpoint).read_text())
@@ -174,6 +177,22 @@ class Runner:
                 except OSError:
                     print('Evaluation log write failed', flush=True)
 
+    def vote(self, state, base):
+        """Cast at most one cautious vote per election, after the order is safely handled."""
+        election = (state.get('politics') or {}).get('election') or {}
+        key = (state.get('mode'), state.get('market'), election.get('id'))
+        order = self.accepted_order or getattr(self.brain, 'last_order', None)
+        if not election.get('id') or key in self.voted or not order:
+            return
+        self.voted.add(key)
+        try:
+            choice = choose_vote(state, order)
+            if choice and choice != (state.get('you') or {}).get('vote'):
+                status, _ = self.client.call('POST', base + '/vote', {'candidate': choice}, timeout=5.)
+                print('Vote for %s: HTTP %s' % (choice, status), flush=True)
+        except Exception as error:
+            print('Vote skipped (%s)' % type(error).__name__, flush=True)
+
     def play(self, base='/api/v1'):
         version, next_state, backoff = 0, None, .25
         while True:
@@ -213,6 +232,7 @@ class Runner:
                         self.save()
                     self.record_evaluation(state)
                     self.health(state)
+                    self.vote(state, base)
                     continue
                 if key != self.pending_key or active_features != self.pending_features:
                     try:
@@ -228,9 +248,11 @@ class Runner:
                 if status == 200:
                     self.accepted = key
                     self.accepted_features = active_features
+                    self.accepted_order = order
                     self.record(state, order)
                     self.save()
                     self.health(state)
+                    self.vote(state, base)
                     if isinstance(response.get('state'), dict):
                         next_state = response['state']
                 elif status == 409:

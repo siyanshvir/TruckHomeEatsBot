@@ -109,7 +109,8 @@ class Rules:
     def read(cls, state):
         r = state.get('rules') or {}
         return cls(float(r.get('budget', 500)), dict(r.get('costs') or COSTS),
-                   dict(r.get('values') or VALUES), tuple(r.get('spots') or SPOTS),
+                   dict(r.get('values') or VALUES),
+                   tuple(s for s in (r.get('spots') or SPOTS) if s in SPOTS),
                    float(r.get('price_min', 1)), float(r.get('price_max', 30)))
 
     def capacity(self, quality):

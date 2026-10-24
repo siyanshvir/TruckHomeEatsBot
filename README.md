@@ -111,6 +111,23 @@ computation-reuse ideas in [Peezy0/nightshift-food-truck](https://github.com/Pee
 They are implemented within our existing learner and customer-flow model; the
 smallest-three rule, price bounds, and Price Wars rival models are retained.
 
+## Staff, moving costs and elections
+
+Planning subtracts what the API says we will pay: wages for the current crew
+(`you.staff`), the move cost from `you.last_spot` (`rules.move_costs`, free on
+the first day out), and election laws in force for the target day. Orders never
+exceed `you.staff.capacity` (50 meals per employee). Price floor/cap laws change
+the price customers see; junk, luxury and money laws change profit. With
+the rules off, the math is unchanged. These costs are not added to the learning
+regime fingerprint.
+
+The runner casts at most one vote per election, only when a candidate's laws
+add at least $30/day to our current order; otherwise it abstains, which avoids
+protests against the winner's voters. Spots the model has no priors for (new
+spots) are ignored rather than modeled, and the crew size and wage are left at
+the API defaults. Campus-crowd laws, meat/veggie, coupons, football and riots are
+not modeled.
+
 ## Learning and persistence
 
 The accepted-order ledger `data/forecasts-v2.jsonl` now freezes code/model hashes,
