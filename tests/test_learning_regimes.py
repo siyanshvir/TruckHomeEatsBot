@@ -99,8 +99,11 @@ class LearningRegimeTests(unittest.TestCase):
 
     def test_walk_over_skips_wrong_local_sales_fit_but_keeps_origin_crowd(self):
         learner = Learner()
+        day = outcome()
+        # Without walked_in/walked_out the walk-ins cannot be removed: fitting is withheld.
+        del day['spots']['northres']['walked_in'], day['spots']['northres']['walked_out']
         with patch('learning.expected_sales') as model:
-            learner.learn(outcome(), forecast=forecast(), features={'walk_over': True})
+            learner.learn(day, forecast=forecast(), features={'walk_over': True})
         model.assert_not_called()
         self.assertEqual(learner.counts['northres'], 0)
         self.assertEqual(learner.weights['northres'], [0.] * len(PARTICLES))
