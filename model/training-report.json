@@ -1,0 +1,1 @@
+{"training_days":420,"held_out_days":120,"held_out_markets":["1000","1005","1010","1015"],"untrained":{"mean_sales_error":4.088797516706403,"observations":690,"sellouts":51},"trained":{"mean_sales_error":3.028261161496699,"observations":690,"sellouts":51}}

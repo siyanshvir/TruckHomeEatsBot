@@ -1,0 +1,219 @@
+"""Night Shift runner. Standard library only; importing this module never loads secrets."""
+import argparse
+import json
+import os
+from pathlib import Path
+import time
+import urllib.error
+import urllib.request
+from game import Rules, SPOTS
+from learning import Learner
+from strategy import Brain
+
+ROOT = Path(__file__).resolve().parent
+
+
+def load_env():
+    path = ROOT / '.env'
+    if path.exists():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith('export '):
+                line = line[7:]
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('\"\''))
+
+
+class Client:
+    def __init__(self, url=None, key=None):
+        self.url = (url or os.environ.get('NIGHTSHIFT_URL', 'https://nightshift.joinbuilders.org')).rstrip('/')
+        self.key = key or os.environ.get('NIGHTSHIFT_KEY', '')
+        if not self.key:
+            raise ValueError('Set NIGHTSHIFT_KEY in .env or the environment')
+        if not self.url.startswith('https://'):
+            raise ValueError('NIGHTSHIFT_URL must use HTTPS')
+
+    def call(self, method, path, body=None, timeout=30):
+        if not path.startswith('/api/v1/') and path != '/api/v1':
+            raise ValueError('Unexpected API path')
+        request = urllib.request.Request(self.url + path, method=method,
+                    data=None if body is None else json.dumps(body).encode(),
+                    headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, json.load(response)
+        except urllib.error.HTTPError as error:
+            try:
+                return error.code, json.load(error)
+            except ValueError:
+                return error.code, {'error': 'HTTP request failed'}
+
+
+def atomic_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(value, separators=(',', ':'), allow_nan=False) + '\n')
+    temporary.replace(path)
+
+
+def make_brain(model=None, samples=12):
+    path = Path(model) if model else ROOT / 'model' / 'prior.json'
+    learner = Learner.load(path) if path.exists() else Learner()
+    return Brain(learner=learner, samples=samples)
+
+
+def fallback(state):
+    """Bound loss if policy fails: assess all spots using forecast less rival stock."""
+    rules = Rules.read(state)
+    forecast = (state.get('forecast') or {}).get('expected_customers') or {}
+    last = (state.get('last_day') or {}).get('spots') or {}
+    def opportunity(spot):
+        rivals = (last.get(spot) or {}).get('trucks') or []
+        stock = sum(t.get('meals', 0) for t in rivals if t.get('id') != state.get('you', {}).get('id'))
+        return max(0., float(forecast.get(spot, 0)) - stock)
+    spot = max(rules.spots, key=opportunity)
+    meals = min(30, rules.capacity('standard'), int(opportunity(spot) * .35))
+    return rules.validate({'spot': spot, 'price': max(rules.price_min, min(rules.price_max, 7.5)),
+                           'quality': 'standard', 'meals': max(0, meals)})
+
+
+class Runner:
+    def __init__(self, client, brain, checkpoint=None, log=None, resume=True):
+        self.client, self.brain = client, brain
+        self.checkpoint, self.log = checkpoint, log
+        self.accepted = None
+        self.pending_key = self.pending_order = None
+        if resume and checkpoint and Path(checkpoint).exists():
+            try:
+                saved = json.loads(Path(checkpoint).read_text())
+                self.brain.restore(saved['brain'])
+                self.accepted = saved['accepted']
+            except (ValueError, KeyError, TypeError):
+                print('Checkpoint unreadable; starting from the trained model', flush=True)
+
+    def save(self):
+        if self.checkpoint:
+            try:
+                atomic_json(self.checkpoint, {'accepted': self.accepted, 'brain': self.brain.dump()})
+            except OSError:
+                print('Checkpoint write failed', flush=True)
+
+    def record(self, state, order):
+        if self.log:
+            try:
+                Path(self.log).parent.mkdir(parents=True, exist_ok=True)
+                with open(self.log, 'a') as out:
+                    out.write(json.dumps({'state': state, 'order': order, 'decision': self.brain.diagnostics}) + '\n')
+            except OSError:
+                print('Decision log write failed', flush=True)
+        diag = self.brain.diagnostics
+        for result in diag.get('ranking', []):
+            candidate = result['order']
+            print('  %-9s %-8s $%5.2f x%3d predicted sales %.1f profit $%.0f' %
+                  (candidate['spot'], candidate['quality'], candidate['price'], candidate['meals'],
+                   result['sales'], result['profit']), flush=True)
+        print('  chose %s; search %.3fs' % (order, diag.get('elapsed', 0)), flush=True)
+
+    def play(self, base='/api/v1'):
+        version, next_state, backoff = 0, None, .25
+        while True:
+            try:
+                if next_state is None:
+                    status, state = self.client.call('GET', base + '/state?since=%s' % version)
+                    if status in (401, 404):
+                        raise RuntimeError('State request denied (HTTP %s)' % status)
+                    if status != 200:
+                        if status == 429:
+                            time.sleep(1.)
+                        else:
+                            time.sleep(backoff)
+                            backoff = min(5., backoff * 2)
+                        continue
+                else:
+                    state, next_state = next_state, None
+                version = state['version']
+                backoff = .25
+                if state.get('phase') == 'over' and state.get('mode') == 'practice':
+                    self.brain.observe(state)
+                    self.save()
+                    return state
+                key = [state.get('mode'), state.get('market'), state.get('order_for_day')]
+                if state.get('phase') != 'night' or not state.get('orders_open') or key == self.accepted:
+                    continue
+                if key != self.pending_key:
+                    try:
+                        order = self.brain.decide(state)
+                    except Exception as error:
+                        print('Policy error (%s); using bounded fallback' % type(error).__name__, flush=True)
+                        order = fallback(state)
+                    self.pending_key, self.pending_order = key, order
+                order = self.pending_order
+                # Submission precedes logging/checkpoint disk I/O in the two-second window.
+                status, response = self.client.call('POST', base + '/orders', order, timeout=1.)
+                if status == 200:
+                    self.accepted = key
+                    self.record(state, order)
+                    self.save()
+                    if isinstance(response.get('state'), dict):
+                        next_state = response['state']
+                elif status == 409:
+                    # Read immediately: a market may have advanced while we computed.
+                    version = 0
+                    self.pending_key = None
+                    time.sleep(.05)
+                elif status in (401, 404):
+                    raise RuntimeError('Order request denied (HTTP %s)' % status)
+                elif status == 400:
+                    # Avoid a tight loop; one validated conservative replacement.
+                    self.pending_order = fallback(state)
+                    version = 0
+                    time.sleep(.2)
+                else:
+                    version = 0
+                    time.sleep(1. if status == 429 else .1)
+            except (urllib.error.URLError, OSError, ValueError, KeyError) as error:
+                # Poll from zero after an uncertain submission; retry the same order,
+                # without learning the same day twice or waiting 25 seconds for a change.
+                version = 0
+                print('Connection/state error (%s); retrying' % type(error).__name__, flush=True)
+                time.sleep(backoff)
+                backoff = min(5., backoff * 2)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Learned Night Shift profit optimizer')
+    parser.add_argument('--practice', action='store_true')
+    parser.add_argument('--seed', default='rebuild-check')
+    parser.add_argument('--days', type=int, default=30)
+    parser.add_argument('--rivals', type=int, default=3)
+    parser.add_argument('--samples', type=int, default=12)
+    parser.add_argument('--model', type=Path)
+    parser.add_argument('--fresh', action='store_true', help='Ignore live checkpoint')
+    args = parser.parse_args()
+    load_env()
+    client = Client()
+    brain = make_brain(args.model, args.samples)
+    base = '/api/v1'
+    checkpoint = None if args.practice else ROOT / 'data' / 'runtime-v1.json'
+    if args.practice:
+        status, response = client.call('POST', base + '/practice',
+                            {'seed': args.seed, 'days': args.days, 'rivals': args.rivals})
+        if status not in (200, 201):
+            raise RuntimeError('Practice creation failed (HTTP %s)' % status)
+        base = response['base']
+    runner = Runner(client, brain, checkpoint,
+                    ROOT / 'data' / ('practice-v1.jsonl' if args.practice else 'decisions-v1.jsonl'),
+                    resume=not args.fresh)
+    final = runner.play(base)
+    if final:
+        print('Practice complete: $%.2f' % final['you']['cash'])
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('\nStopped')

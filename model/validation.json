@@ -1,0 +1,263 @@
+{
+  "source": "server-practice",
+  "days": 30,
+  "results": [
+    {
+      "policy": "cautious",
+      "seed": "rebuild-final-c",
+      "rivals": 3,
+      "style": "house",
+      "profit": 5562.5,
+      "waste": 145,
+      "zero_sale_days": 0,
+      "worst_day": -38.25,
+      "decision_max_seconds": 6.929202936589718e-05,
+      "decision_mean_seconds": 4.110422451049089e-05
+    },
+    {
+      "policy": "learned",
+      "seed": "rebuild-final-c",
+      "rivals": 3,
+      "style": "house",
+      "profit": 11082.39,
+      "waste": 241,
+      "zero_sale_days": 0,
+      "worst_day": 46.25,
+      "decision_max_seconds": 0.13734316697809845,
+      "decision_mean_seconds": 0.11194001940311864
+    },
+    {
+      "policy": "cautious",
+      "seed": "rebuild-final-c",
+      "rivals": 7,
+      "style": "house",
+      "profit": 7916.75,
+      "waste": 169,
+      "zero_sale_days": 0,
+      "worst_day": -66,
+      "decision_max_seconds": 7.545796688646078e-05,
+      "decision_mean_seconds": 4.8923632130026816e-05
+    },
+    {
+      "policy": "learned",
+      "seed": "rebuild-final-c",
+      "rivals": 7,
+      "style": "house",
+      "profit": 15416.36,
+      "waste": 407,
+      "zero_sale_days": 1,
+      "worst_day": -405,
+      "decision_max_seconds": 0.19107604201417416,
+      "decision_mean_seconds": 0.1547970527006934
+    },
+    {
+      "policy": "cautious",
+      "seed": "rebuild-final-d",
+      "rivals": 3,
+      "style": "house",
+      "profit": 6094.25,
+      "waste": 79,
+      "zero_sale_days": 0,
+      "worst_day": -15.75,
+      "decision_max_seconds": 0.00010954192839562893,
+      "decision_mean_seconds": 5.0977764961620174e-05
+    },
+    {
+      "policy": "learned",
+      "seed": "rebuild-final-d",
+      "rivals": 3,
+      "style": "house",
+      "profit": 12331.24,
+      "waste": 214,
+      "zero_sale_days": 0,
+      "worst_day": 109.75,
+      "decision_max_seconds": 0.20913387509062886,
+      "decision_mean_seconds": 0.11501673470484093
+    },
+    {
+      "policy": "cautious",
+      "seed": "rebuild-final-d",
+      "rivals": 7,
+      "style": "house",
+      "profit": 7757.75,
+      "waste": 142,
+      "zero_sale_days": 0,
+      "worst_day": 13.75,
+      "decision_max_seconds": 6.841705180704594e-05,
+      "decision_mean_seconds": 3.501799656078219e-05
+    },
+    {
+      "policy": "learned",
+      "seed": "rebuild-final-d",
+      "rivals": 7,
+      "style": "house",
+      "profit": 16866.06,
+      "waste": 364,
+      "zero_sale_days": 0,
+      "worst_day": -302.1,
+      "decision_max_seconds": 0.19745666603557765,
+      "decision_mean_seconds": 0.15067515829966094
+    }
+  ],
+  "limitations": [
+    "Private practice against house bots; not live tournament results.",
+    "Offline simulator is approximate.",
+    "Some individual days lose money."
+  ],
+  "offline_responsive": {
+    "source": "approximate-offline",
+    "days": 30,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-1",
+        "rivals": 3,
+        "style": "crowd",
+        "profit": 8554.890000000001,
+        "waste": 305,
+        "zero_sale_days": 0,
+        "worst_day": 0.3799999999999386,
+        "decision_max_seconds": 0.11965245904866606,
+        "decision_mean_seconds": 0.09096474028580512
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-1",
+        "rivals": 3,
+        "style": "moving",
+        "profit": 7587.879999999999,
+        "waste": 535,
+        "zero_sale_days": 1,
+        "worst_day": -192.5,
+        "decision_max_seconds": 0.10712058306671679,
+        "decision_mean_seconds": 0.09451420701031263
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-1",
+        "rivals": 7,
+        "style": "crowd",
+        "profit": 15396.490000000002,
+        "waste": 386,
+        "zero_sale_days": 0,
+        "worst_day": 80.0,
+        "decision_max_seconds": 0.36410587502177805,
+        "decision_mean_seconds": 0.16851311122688153
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-1",
+        "rivals": 7,
+        "style": "moving",
+        "profit": 8929.0,
+        "waste": 678,
+        "zero_sale_days": 2,
+        "worst_day": -495.0,
+        "decision_max_seconds": 0.23036120808683336,
+        "decision_mean_seconds": 0.16172110685923446
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-2",
+        "rivals": 3,
+        "style": "crowd",
+        "profit": 9640.15,
+        "waste": 209,
+        "zero_sale_days": 1,
+        "worst_day": -391.8,
+        "decision_max_seconds": 0.1342666670680046,
+        "decision_mean_seconds": 0.09208041670887421
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-2",
+        "rivals": 3,
+        "style": "moving",
+        "profit": 3579.8099999999995,
+        "waste": 870,
+        "zero_sale_days": 6,
+        "worst_day": -456.75,
+        "decision_max_seconds": 0.22585287503898144,
+        "decision_mean_seconds": 0.10474373893424248
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-2",
+        "rivals": 7,
+        "style": "crowd",
+        "profit": 16032.48,
+        "waste": 196,
+        "zero_sale_days": 0,
+        "worst_day": -405.0,
+        "decision_max_seconds": 0.1764145839260891,
+        "decision_mean_seconds": 0.14510568742795538
+      },
+      {
+        "policy": "learned",
+        "seed": "rebuild-unseen-2",
+        "rivals": 7,
+        "style": "moving",
+        "profit": 9795.61,
+        "waste": 722,
+        "zero_sale_days": 2,
+        "worst_day": -498.75,
+        "decision_max_seconds": 0.1606311670038849,
+        "decision_mean_seconds": 0.14731542657051858
+      }
+    ]
+  },
+  "pricewars_stress": {
+    "source": "approximate-offline",
+    "days": 30,
+    "results": [
+      {
+        "policy": "cautious",
+        "seed": "pricewars-holdout",
+        "rivals": 5,
+        "style": "undercut",
+        "profit": 5294.75,
+        "waste": 388,
+        "zero_sale_days": 0,
+        "worst_day": -421.0,
+        "decision_max_seconds": 2.7165981009602547e-05,
+        "decision_mean_seconds": 4.320777952671051e-06
+      },
+      {
+        "policy": "learned",
+        "seed": "pricewars-holdout",
+        "rivals": 5,
+        "style": "undercut",
+        "profit": 14928.120000000003,
+        "waste": 15,
+        "zero_sale_days": 0,
+        "worst_day": 360.0,
+        "decision_max_seconds": 0.1418130409438163,
+        "decision_mean_seconds": 0.13145588322076945
+      },
+      {
+        "policy": "cautious",
+        "seed": "pricewars-holdout",
+        "rivals": 5,
+        "style": "cycle",
+        "profit": 5294.75,
+        "waste": 388,
+        "zero_sale_days": 0,
+        "worst_day": -421.0,
+        "decision_max_seconds": 8.041970431804657e-06,
+        "decision_mean_seconds": 3.241701051592827e-06
+      },
+      {
+        "policy": "learned",
+        "seed": "pricewars-holdout",
+        "rivals": 5,
+        "style": "cycle",
+        "profit": 14928.120000000003,
+        "waste": 15,
+        "zero_sale_days": 0,
+        "worst_day": 360.0,
+        "decision_max_seconds": 0.14141058293171227,
+        "decision_mean_seconds": 0.13177839293299864
+      }
+    ]
+  }
+}
