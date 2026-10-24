@@ -97,6 +97,7 @@ class Runner:
         self.accepted = None
         self.accepted_features = None
         self.accepted_order = None
+        self.blocked = None
         self.pending_key = self.pending_order = None
         self.pending_features = None
         self.voted = set()
@@ -256,7 +257,7 @@ class Runner:
                 same_features = (active_features == self.accepted_features or
                                  self.accepted_features is None and not any(active_features.values()))
                 if (state.get('phase') != 'night' or not state.get('orders_open')
-                        or key == self.accepted and same_features):
+                        or key == self.blocked or key == self.accepted and same_features):
                     last = state.get('last_day') or {}
                     if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
                             getattr(self.brain, 'seen', None) != last['day'] or
@@ -298,6 +299,11 @@ class Runner:
                     time.sleep(.05)
                 elif status in (401, 404):
                     raise RuntimeError('Order request denied (HTTP %s)' % status)
+                elif status == 403:
+                    # Not allowed tonight (for example wrecked in a riot): ask once, then wait for new state.
+                    self.blocked = key
+                    print('Order refused (HTTP 403): %s' % response.get('error', ''), flush=True)
+                    time.sleep(1.)
                 elif status == 400:
                     # Avoid a tight loop; one validated conservative replacement.
                     self.pending_order = fallback(state)

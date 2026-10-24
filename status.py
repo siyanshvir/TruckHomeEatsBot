@@ -27,6 +27,10 @@ def main():
     print('Learned through day:', brain.get('seen'))
     print('Last accepted [mode, market, day]:', saved.get('accepted'))
     print('Last planned order:', brain.get('last_order'))
+    crew = (brain.get('crew') or {}).get('checks', [])[-3:]
+    for c in crew:
+        print('Crew day %s: target %s at $%.2f; predicted %.1f employees / actual %s; poached %s' %
+              (c['day'], c['target'], c['wage'], c['predicted_employees'], c['actual_employees'], c['poached']))
     checks = brain.get('prediction_checks', [])[-5:]
     if not checks:
         print('Prediction checks appear after the first day planned by this version finishes.')

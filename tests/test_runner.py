@@ -46,6 +46,20 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(brain.calls, 2)
         self.assertTrue(runner.accepted_features['fair_choice'])
 
+    def test_forbidden_order_is_not_retried_tonight(self):
+        class Client:
+            def __init__(self): self.posts = 0; self.gets = 0
+            def call(self, method, path, body=None, **kwargs):
+                if method == 'GET':
+                    self.gets += 1
+                    if self.gets > 3: raise Stop()
+                    return 200, state()
+                self.posts += 1
+                return 403, {'error': 'your truck was wrecked in the riot'}
+        client = Client()
+        with self.assertRaises(Stop): Runner(client, StubBrain()).play()
+        self.assertEqual(client.posts, 1)
+
     def test_idle_state_records_health_without_submitting(self):
         class Client:
             def __init__(self): self.calls = 0
