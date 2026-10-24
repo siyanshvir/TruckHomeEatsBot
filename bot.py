@@ -66,14 +66,14 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def make_brain(model=None, samples=32, small_crowds=True, target_spot=None):
+def make_brain(model=None, samples=32, small_crowds=True):
     path = Path(model) if model else ROOT / 'model' / 'prior.json'
     learner = Learner.load(path) if path.exists() else Learner()
     # Inventory still pays full ingredient/waste costs in expected profit; ease
     # only the additional downside penalty to permit supported demand growth.
     brain = Brain(learner=learner, samples=samples, small_crowds=small_crowds,
                   risk=.08 if small_crowds else .15,
-                  spot_price_lift={'thompson': 1.39}, target_spot=target_spot)
+                  spot_price_lift={'thompson': 1.39})
     attach_policy(brain)  # learns from every day; steers only in the final (see Runner.apply_profile)
     return brain
 
@@ -455,17 +455,12 @@ def main():
     parser.add_argument('--fresh', action='store_true', help='Ignore live checkpoint')
     parser.add_argument('--profile', choices=('auto', 'final', 'baseline'), default='auto',
                         help='final: use the adaptive policy even in practice; auto: final markets only')
-    parser.add_argument('--limited', action='store_true',
-                        help='Old rules: only the three quietest spots, low price ceilings')
-    parser.add_argument('--spot', default='oval',
-                        help='Spot to always park at (default oval); "any" lets the model choose')
     args = parser.parse_args()
     if args.predict and args.practice:
         parser.error('--predict is for a read-only live forecast; omit --practice')
     load_env()
     client = Client()
-    brain = make_brain(args.model, args.samples, small_crowds=args.limited,
-                       target_spot=None if args.spot == 'any' else args.spot)
+    brain = make_brain(args.model, args.samples)
     base = '/api/v1'
     checkpoint = None if args.practice else ROOT / 'data' / 'runtime-v1.json'
     if args.practice:
