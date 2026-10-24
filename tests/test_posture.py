@@ -100,3 +100,16 @@ class CatchUpTests(unittest.TestCase):
         self.assertLessEqual(read(live, hist, 'me')['risk_scale'], 1.)
         self.assertEqual(read({'day': 8, 'days': 8, 'mode': 'live'}, hist, 'me')['pressure'],
                          read(final, hist, 'me')['pressure'])   # no days left: nothing to catch up
+
+
+class FinalDefaultTests(unittest.TestCase):
+    def test_final_markets_stay_neutral_unless_switched_on(self):
+        import os
+        hist = history(0, [400, 300], days=8)
+        self.assertGreater(read({'day': 8, 'days': 30, 'mode': 'live'}, hist, 'me')['pressure'], 0)
+        self.assertEqual(read({'day': 8, 'days': 30, 'mode': 'final'}, hist, 'me'), NEUTRAL)
+        os.environ['NIGHTSHIFT_POSTURE'] = 'final'
+        try:
+            self.assertGreater(read({'day': 8, 'days': 30, 'mode': 'final'}, hist, 'me')['pressure'], 0)
+        finally:
+            del os.environ['NIGHTSHIFT_POSTURE']

@@ -42,8 +42,24 @@ def enabled(root=None):
         return True
 
 
+def final_enabled(root=None):
+    """The final scores average profit, and offline tests showed risk-seeking lowers it in tough markets,
+    so the posture stays neutral in final markets unless data/profile.json has {"posture_final": "on"}."""
+    import json, os
+    from pathlib import Path
+    if os.environ.get('NIGHTSHIFT_POSTURE') == 'final':
+        return True
+    try:
+        path = Path(root) if root else Path(__file__).resolve().parent / 'data' / 'profile.json'
+        return json.loads(path.read_text()).get('posture_final') == 'on'
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def read(state, history, me):
     """Posture for tonight. `history` maps day -> {truck id: cash}, newest included."""
+    if state.get('mode') in ('final', 'showcase') and not final_enabled():
+        return dict(NEUTRAL)
     day = int(state.get('day') or 0)
     rates, span = _rates(history, day)
     if span < MIN_DAYS - 1 or me not in rates or len(rates) < 2:
