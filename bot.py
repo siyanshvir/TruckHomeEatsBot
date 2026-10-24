@@ -266,8 +266,14 @@ def play(base):
         key = (state.get("mode"), state.get("market"), state.get("order_for_day"))
         if state["phase"] == "night" and state.get("orders_open") and key != ordered_for:
             report(state)
+            log_state(state)
             order = decide(state)
-            status, res = call("POST", base + "/orders", order)
+            try:
+                status, res = call("POST", base + "/orders", order)
+            except (urllib.error.URLError, OSError) as e:
+                print("  network error sending order (%s), retrying" % (e,))
+                time.sleep(1)
+                continue
             if status == 200:
                 ordered_for = key
                 print("  ordered for day %s: %s" % (res.get("for_day"), order))
@@ -276,6 +282,20 @@ def play(base):
             else:
                 print("  order rejected (%d): %s" % (status, res.get("error")))
                 time.sleep(1)
+
+
+def log_state(state):
+    """Append the latest day to data/live.jsonl so rivals' behaviour can be studied later."""
+    if state.get("mode") == "practice" or not state.get("last_day"):
+        return
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open("data/live.jsonl", "a") as f:
+            f.write(json.dumps({"mode": state.get("mode"), "market": state.get("market"),
+                                "last_day": state["last_day"],
+                                "trucks": [{"id": t["id"], "rep": t.get("reputation")} for t in state["trucks"]]}) + "\n")
+    except OSError:
+        pass
 
 
 def report(state):
