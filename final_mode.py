@@ -35,7 +35,7 @@ SLOW, FAST = .9, .4  # seconds of the last decision: shrink or grow the scenario
 class FinalPolicy:
     def __init__(self, data=None, priors=None, seed=0):
         data, priors = data or {}, priors or {}
-        self.calibrator = self._build(Calibrator, data.get('calibration') or priors.get('calibration_state'))
+        self.calibrator = self._build(Calibrator, data.get('calibration') or calibrator_seed(priors))
         self.competition = self._build(Competition, data.get('competition'))
         self.adapter = self._build(RuleAdapter, data.get('rules'))
         self.controller = None
@@ -182,6 +182,26 @@ class FinalPolicy:
         if self.calibrator is not None:
             out['calibration'] = self._guard('report', lambda: self.calibrator.report(), {})
         return out
+
+
+def calibrator_seed(priors):
+    """Calibrator state from train_final priors: a few pseudo-observations per price-ratio cell."""
+    cells = {}
+    try:
+        from calibration import EDGES
+        for quality, bins in ((priors.get('calibration') or {}).get('buckets') or {}).items():
+            for span, cell in bins.items():
+                low, high = (float(x) for x in span.split('-'))
+                n = float(cell.get('n') or 0)
+                if n <= 0:
+                    continue
+                key = '%s|%d' % (quality, sum((low + high) / 2 > edge for edge in EDGES))
+                weight = min(n, 3.)
+                total, old = cells.get(key, [0., 0.])
+                cells[key] = [total + float(cell['mean']) * weight, old + weight]
+    except Exception:
+        return None
+    return {'cells': cells, 'count': 0} if cells else None
 
 
 def load_priors_file(path=None):

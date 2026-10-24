@@ -42,6 +42,16 @@ New spots register themselves (`game.register_spots`) from `RuleAdapter.normaliz
 3. Confirm the terminal prints `Profile: FINAL (adaptive)` when the first final state arrives.
 4. Crew: the saved crew setting seeds each market; the planner re-plans it every night.
 
+## Showcase and non-playing trucks
+After the ranking only the top 4 trucks play a `showcase` market; every other truck sees `you: null`
+and its orders get 403. The runner waits (no decide, no POST) while `you` is null, and `showcase`
+uses the final profile and the final checkpoint.
+
+## Learned from data (no hand-set numbers)
+Surprise rates (fire drill, giveaway), protest rate, game-day rate, phantom-rival rate, rival
+follow behavior, crowd bias/variance, calibration by price level and the three knobs all update from
+observed days. Starting points come from the docs or from `model/final_priors.json`.
+
 ## Known limits
 - Offline simulations are approximations; they are stress signals, not the official engine.
 - Calibrator, competition and controller constants are untuned priors until data accumulates.

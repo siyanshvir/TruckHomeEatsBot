@@ -211,7 +211,7 @@ class Runner:
                 return 'baseline'
         except (OSError, ValueError, AttributeError):
             pass
-        return 'final' if (state.get('mode') == 'final' or self.force_final) else 'baseline'
+        return 'final' if (state.get('mode') in ('final', 'showcase') or self.force_final) else 'baseline'
 
     def apply_profile(self, state):
         policy = getattr(self.brain, 'final_policy', None)
@@ -223,7 +223,7 @@ class Runner:
             print('Profile: %s' % ('FINAL (adaptive)' if want else 'baseline'), flush=True)
         if self.live_checkpoint:  # final markets never write the live checkpoint, whatever the profile
             live = Path(self.live_checkpoint)
-            self.checkpoint = live.parent / 'final-runtime-v1.json' if state.get('mode') == 'final' else live
+            self.checkpoint = live.parent / 'final-runtime-v1.json' if state.get('mode') in ('final', 'showcase') else live
 
     def final_extras(self, state, order):
         policy = getattr(self.brain, 'final_policy', None)
@@ -251,7 +251,8 @@ class Runner:
             return
         self.reported.add(key)
         try:
-            analysis = vote_analysis(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)())
+            analysis = vote_analysis(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)(),
+                                     getattr(self.brain, 'protest_rate', lambda: .30)())
             if analysis:
                 parts = ['%s %+.0f/day, win %.0f%% (abstain %.0f%%), net %+.0f' %
                          (r['id'], r['daily_value'], 100*r['p_win_vote'], 100*r['p_win_abstain'], r['net'])
@@ -270,7 +271,8 @@ class Runner:
             return
         self.voted.add(key)
         try:
-            choice = choose_vote(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)())
+            choice = choose_vote(state, order, getattr(self.brain, 'game_day_rate', lambda: .25)(),
+                                 getattr(self.brain, 'protest_rate', lambda: .30)())
             if choice and not (state.get('you') or {}).get('vote'):  # never override a vote already cast
                 status, _ = self.client.call('POST', base + '/vote', {'candidate': choice}, timeout=5.)
                 print('Vote for %s: HTTP %s' % (choice, status), flush=True)
@@ -338,10 +340,10 @@ class Runner:
                 active_features = features(state.get('features'))
                 same_features = (active_features == self.accepted_features or
                                  self.accepted_features is None and not any(active_features.values()))
-                if (state.get('phase') != 'night' or not state.get('orders_open')
+                if (state.get('phase') != 'night' or not state.get('orders_open') or state.get('you') is None
                         or key == self.blocked or key == self.accepted and same_features):
                     last = state.get('last_day') or {}
-                    if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
+                    if state.get('mode') in ('live', 'final', 'showcase') and last.get('day') is not None and (
                             getattr(self.brain, 'seen', None) != last['day'] or
                             getattr(self.brain, 'market', None) != key[:2]):
                         self.observe_safely(state)

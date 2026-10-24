@@ -50,6 +50,7 @@ class Brain:
         self.crew = CrewModel()
         self.phantom = {'events': PHANTOM_PRIOR[0], 'exposures': PHANTOM_PRIOR[1]}
         self.surprises = {'days': 0, 'fire': 0, 'give': 0}  # counted from last_day.moments
+        self.protests = {'days': 0, 'protests': 0, 'against_us': 0}  # office days seen and protests among them
         self.prediction_checks = []
         self.forecast_record = None
         self.scenario_rivals = []
@@ -76,7 +77,7 @@ class Brain:
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
                 'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
-                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom, 'surprises': self.surprises,
+                'prediction_checks': self.prediction_checks, 'crew': self.crew.to_dict(), 'phantom': self.phantom, 'surprises': self.surprises, 'protests': self.protests,
                 'final': self._final_state()}
 
     def restore(self, data):
@@ -86,6 +87,7 @@ class Brain:
         self.crew = CrewModel(data.get('crew'))
         self.phantom = data.get('phantom') or self.bootstrap_phantom(self.prediction_checks)
         self.surprises = data.get('surprises') or {'days': 0, 'fire': 0, 'give': 0}
+        self.protests = data.get('protests') or {'days': 0, 'protests': 0, 'against_us': 0}
         if self.final_policy is not None and data.get('final'):
             self.final_policy.restore(data['final'])
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
@@ -114,6 +116,11 @@ class Brain:
         """Fire-drill / giveaway chance per day: the documented rate, updated by what we have seen."""
         weight = 30.
         return (self.surprises['days'] and (self.surprises[kind] + prior * weight) / (self.surprises['days'] + weight)) or prior
+
+    def protest_rate(self, prior=.30):
+        """Chance of a protest on a day someone holds office: the documented 30%, updated by what we see."""
+        weight = 20.
+        return (self.protests['protests'] + prior * weight) / (self.protests['days'] + weight)
 
     def phantom_rate(self):
         low, high = PHANTOM_LIMITS
@@ -169,12 +176,18 @@ class Brain:
             realized_features = {}  # Legacy archives and fixtures before feature flags.
         # Fire drills and giveaways thin a spot's crowd after the forecast; do not learn that as bias.
         surprise_spots = {m.get('spot') for m in last.get('moments') or []
-                          if isinstance(m, dict) and m.get('kind') in ('firedrill', 'giveaway')}
+                          if isinstance(m, dict) and m.get('kind') in ('firedrill', 'giveaway', 'protest')}
         if (state.get('features') or {}).get('surprises'):  # learn how often surprises really happen
             kinds = {m.get('kind') for m in last.get('moments') or [] if isinstance(m, dict)}
             self.surprises['days'] += 1
             self.surprises['fire'] += 'firedrill' in kinds
             self.surprises['give'] += 'giveaway' in kinds
+        if (state.get('politics') or {}).get('office'):  # an office holder is in: protests can happen
+            protests = [m for m in last.get('moments') or [] if isinstance(m, dict) and m.get('kind') == 'protest']
+            self.protests['days'] += 1
+            self.protests['protests'] += bool(protests)
+            self.protests['against_us'] += any(isinstance(t, dict) and t.get('id') == me and t.get('status') == 'protested'
+                                               for m in protests for t in m.get('trucks') or [])
         prediction = (self.pending or {}).get('prediction') if forecast else None
         if prediction:
             order = prediction['order']

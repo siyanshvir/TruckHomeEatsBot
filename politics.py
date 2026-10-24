@@ -81,7 +81,7 @@ def win_odds(ids, tally, unvoted, ours, samples=400, turnout=.7, seed=7):
     return odds
 
 
-def vote_analysis(state, order, game_rate=.25):
+def vote_analysis(state, order, game_rate=.25, protest_rate=PROTEST_DAILY):
     """Per candidate: daily law value, win odds with and without our vote, protest cost, net gain."""
     election = (state.get('politics') or {}).get('election') or {}
     candidates = [c for c in election.get('candidates') or [] if isinstance(c, dict) and c.get('id')]
@@ -125,7 +125,7 @@ def vote_analysis(state, order, game_rate=.25):
         voters = [t for t, v in (election.get('votes') or {}).items() if v == cid and t != you.get('id')]
         richest = all(cash.get(t, 0.) <= (you.get('cash') or 0.) for t in voters)
         target = min(1., (2. if richest else 1.) / (len(voters) + 1))  # protests favor the top earner
-        protest = term * PROTEST_DAILY * target * PROTEST_SHARE * revenue * voted[cid]
+        protest = term * protest_rate * target * PROTEST_SHARE * revenue * voted[cid]
         rows.append({'id': cid, 'name': candidate.get('name'), 'daily_value': round(value[cid], 1),
                      'p_win_abstain': round(abstain[cid], 3), 'p_win_vote': round(voted[cid], 3),
                      'gain': round(gain, 1), 'protest_cost': round(protest, 1), 'net': round(gain - protest, 1)})
@@ -133,9 +133,9 @@ def vote_analysis(state, order, game_rate=.25):
     return {'rows': rows, 'margin': round(margin, 1), 'term_days': term, 'unvoted': unvoted, 'own': own}
 
 
-def choose_vote(state, order, game_rate=.25):
+def choose_vote(state, order, game_rate=.25, protest_rate=PROTEST_DAILY):
     """Candidate id whose laws most help our usual order, or None to abstain."""
-    analysis = vote_analysis(state, order, game_rate)
+    analysis = vote_analysis(state, order, game_rate, protest_rate)
     if not analysis:
         return None
     best = max(analysis['rows'], key=lambda r: r['net'])

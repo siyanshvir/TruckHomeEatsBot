@@ -145,3 +145,40 @@ class ReviewFixTests(unittest.TestCase):
         brain = make_final_brain(samples=12)
         play(brain, days=2)
         self.assertTrue(brain.diagnostics['candidates'] > 6)
+
+
+class ShowcaseAndPriorTests(unittest.TestCase):
+    def test_a_null_you_waits_instead_of_ordering(self):
+        class Client:
+            def __init__(self): self.gets = 0; self.posts = 0
+            def call(self, method, path, body=None, **kwargs):
+                if method == 'POST':
+                    self.posts += 1
+                    return 403, {'error': 'not playing'}
+                self.gets += 1
+                if self.gets > 3: raise Stop()
+                from tests.test_runner import state
+                st = state('showcase'); st['you'] = None
+                return 200, st
+        from tests.test_runner import Stop
+        client = Client()
+        with self.assertRaises(Stop):
+            Runner(client, make_brain(samples=8)).play()
+        self.assertEqual(client.posts, 0)
+
+    def test_showcase_uses_the_final_profile_and_checkpoint(self):
+        runner = Runner(object(), make_brain(samples=8))
+        self.assertEqual(runner.profile_wanted({'mode': 'showcase'}), 'final')
+
+    def test_calibrator_is_seeded_from_trained_priors(self):
+        from final_mode import calibrator_seed
+        seed = calibrator_seed({'calibration': {'buckets': {'standard': {'0.70-0.80': {'mean': .6, 'n': 4, 'censored': 0}}}}})
+        self.assertIn('standard|2', seed['cells'])
+        policy = FinalPolicy(priors={'calibration': {'buckets': {'standard': {'0.70-0.80': {'mean': .6, 'n': 4, 'censored': 0}}}}})
+        self.assertLess(policy.calibrator.factor('thompson', 'standard', 8.5, 11.5), 1.)
+
+    def test_protest_rate_is_learned_from_office_days(self):
+        brain = make_brain(samples=8)
+        self.assertAlmostEqual(brain.protest_rate(), .30)
+        brain.protests = {'days': 40, 'protests': 4, 'against_us': 0}
+        self.assertLess(brain.protest_rate(), .30)
