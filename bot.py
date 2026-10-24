@@ -129,7 +129,7 @@ def expected_sold(count, cells, offers):
 GENERIC = {"price": 10.5, "quality": "standard", "meals": 110, "rep": 50}   # an unknown newcomer
 PRICE_RANGE = {"cheap": (4.0, 10.5), "standard": (6.5, 13.5), "premium": (9.5, 17.0)}
 NOISE = ((0.25, 0.85), (0.5, 1.0), (0.25, 1.15))    # day-to-day swing in customers
-HORIZON = 6          # how many future days a reputation point is worth counting
+HORIZON = 0          # future days a reputation point is worth counting (0 tested best in practice)
 REP_WEIGHT = 0.6     # discount on that future value
 
 
