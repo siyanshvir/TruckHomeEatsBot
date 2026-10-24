@@ -10,7 +10,7 @@ Script: `tools/research_sweep.py` (run with `nice -n 15`, 2 workers). Raw per-ma
   config is "fixed 1.0/0.5/0.10", not the live adaptive controller). Calibrator/competition set to None for E4/E5.
 - `sim.Market(seed, rivals, 20 days, style, features fair_choice+walk_over+salvage)`, seeds r3a-r3c,
   rivals {3,7}, styles {mixed, brutal, moving, follower}: 24 planned markets per config. Time budget stopped the
-  run early: **15 fully paired markets** (3 mixed-complete cases etc.; 14 for baseline/unrestricted/nocomp).
+  run early: **15 fully paired markets** (14 for baseline, unrestricted, nocomp).
   Styles are unevenly filled (follower n=3, others n=4). Sweep order was market-by-market so coverage is balanced.
 - Profit = final cash after 20 days. SE = std of paired differences / sqrt(n). Sim is approximate, reputation
   resets per market, no cross-market learning is exercised.
