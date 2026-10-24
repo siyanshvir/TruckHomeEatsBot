@@ -144,21 +144,32 @@ class Learner:
                        float(before_reps.get(identity(t), {}).get(spot, 50)), int(t['meals']))
                       for t in records if t.get('quality') in QUALITIES]
             records = [t for t in records if t.get('quality') in QUALITIES]
-            # Walk-over changes local arrivals after the origin crowd is drawn.
-            # Until a joint customer-flow likelihood exists, avoid falsely fitting
-            # those transferred sales as local preferences. Origin crowd residuals
-            # below remain usable and segregated in this feature regime.
-            if customers and trucks and not walk_over:
+            # Under walk_over some sales are customers who walked in from other spots.
+            # The API reports walked_in per spot; we remove it from the truck sales so
+            # only local buyers are fitted. Allocation choice: walk-ins are spread over
+            # the trucks here in proportion to their sales (a simple approximation; the
+            # true split depends on stock and price). Locals walking out are already
+            # non-buyers here, so they need no adjustment. If either walk field is
+            # missing the split is unknowable and fitting is withheld, as before.
+            # Origin crowd residuals below remain usable and segregated per regime.
+            walk_known = (not walk_over) or (info.get('walked_in') is not None
+                                             and info.get('walked_out') is not None)
+            observed = [float(t.get('sold', 0)) for t in records]
+            if walk_over and walk_known and observed:
+                total = sum(observed)
+                walked_in = clamp(float(info.get('walked_in') or 0), 0., total)
+                if total > 0:
+                    observed = [x * (1. - walked_in / total) for x in observed]
+            if customers and trucks and walk_known:
                 losses = []
                 for particle in PARTICLES:
                     predictions = expected_sales(trucks, customers, customer_model(spot, kinds, particle),
                                                  rules.values, fair_choice=True) if fair_choice else expected_sales(
                         trucks, customers, customer_model(spot, kinds, particle), rules.values)
                     loss = 0.
-                    for predicted, t in zip(predictions, records):
-                        actual = float(t.get('sold', 0))
+                    for predicted, t, actual in zip(predictions, records, observed):
                         # A sellout is a lower bound, never evidence that demand stops there.
-                        error = max(0., actual - predicted) if actual >= t['meals'] else predicted - actual
+                        error = max(0., actual - predicted) if float(t.get('sold', 0)) >= t['meals'] else predicted - actual
                         loss += error * error / (actual + 12.)
                     losses.append(loss / max(1, len(records)))
                 updated = [.98 * w - strength * min(loss, 80.) / 5.
