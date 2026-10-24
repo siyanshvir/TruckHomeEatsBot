@@ -31,3 +31,18 @@ class RiotTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LawRiotMultiplierTests(unittest.TestCase):
+    def _state(self, key, riot):
+        s = state([{'key': 'game', 'name': 'The Game vs Michigan', 'effect': 'fans may riot if Ohio State loses'}])
+        s['politics'] = {'laws': [{'key': key, 'params': {'game_crowd': {'other': 1.}, 'riot': riot}}]}
+        return s
+
+    def test_crackdown_removes_riot_cost_and_tailgate_raises_it(self):
+        none = riot_cost(state([{'name': 'riot risk', 'effect': 'riot after the game'}]), 'highst')
+        crackdown = riot_cost(self._state('crackdown', 0), 'highst')
+        tailgate = riot_cost(self._state('tailgate', 1.5), 'highst')
+        self.assertEqual(crackdown, 0)
+        self.assertGreater(tailgate, riot_cost(self._state('x', 1.0), 'highst'))
+        self.assertGreater(none, 0)

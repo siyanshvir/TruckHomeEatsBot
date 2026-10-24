@@ -8,6 +8,7 @@ documented, so warnings are read leniently from event text; with no warning the 
 """
 import math
 from game import DISTANCES
+from politics import law_terms
 
 # (intensity, radius, centre spot, chance the game ends that way: Ohio State loses to Michigan 45%,
 # wins the title 80%)
@@ -35,9 +36,18 @@ def warnings(forecast):
     return found
 
 
+def law_multiplier(state):
+    """How election laws in force scale riot fierceness: crackdown 0 (no riots), tailgate 1.5, else 1."""
+    laws = (state.get('politics') or {}).get('laws')
+    return law_terms(laws)['riot'] if laws else 1.
+
+
 def riot_cost(state, spot, daily_profit=250.):
     """Expected dollars of riot cost for opening at this spot tomorrow."""
     if not (state.get('features') or {}).get('riots'):
+        return 0.
+    scale = law_multiplier(state)
+    if scale <= 0:
         return 0.
     total = 0.
     for kind, centre in warnings(state.get('forecast')):
@@ -47,5 +57,5 @@ def riot_cost(state, spot, daily_profit=250.):
             continue
         decay = math.exp(-distance / radius)
         hit = intensity * decay
-        total += chance * hit * (WRECK_SHARE * OUT_DAYS * daily_profit + (1 - WRECK_SHARE) * (30. + 120. * decay))
+        total += scale * chance * hit * (WRECK_SHARE * OUT_DAYS * daily_profit + (1 - WRECK_SHARE) * (30. + 120. * decay))
     return total
