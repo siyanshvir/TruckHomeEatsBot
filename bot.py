@@ -181,6 +181,14 @@ class Runner:
                 except OSError:
                     print('Evaluation log write failed', flush=True)
 
+    def observe_safely(self, state):
+        """Learning must never end the run: on any error skip that day's learning and keep polling."""
+        try:
+            self.brain.observe(state)
+        except Exception as error:
+            print('Day observation skipped (%s)' % type(error).__name__, flush=True)
+            self.brain.seen = (state.get('last_day') or {}).get('day', getattr(self.brain, 'seen', None))
+
     def vote_report(self, state):
         """Say how the campaign looks for our order. Read-only; it never casts or changes a vote."""
         election = (state.get('politics') or {}).get('election') or {}
@@ -282,7 +290,7 @@ class Runner:
                     if state.get('mode') in ('live', 'final') and last.get('day') is not None and (
                             getattr(self.brain, 'seen', None) != last['day'] or
                             getattr(self.brain, 'market', None) != key[:2]):
-                        self.brain.observe(state)
+                        self.observe_safely(state)
                         self.archive(state)
                         self.save()
                     self.record_evaluation(state)
