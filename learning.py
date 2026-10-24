@@ -17,11 +17,12 @@ class Learner:
         self.weights = {s: [0.] * len(PARTICLES) for s in SPOTS}
         self.counts = {s: 0 for s in SPOTS}
         self.crowd = {s: {} for s in SPOTS}
+        self.crowd_variance = {s: {} for s in SPOTS}
         self.rows = 0
 
     def to_dict(self):
         return {'version': self.VERSION, 'weights': self.weights, 'counts': self.counts,
-                'crowd': self.crowd, 'rows': self.rows}
+                'crowd': self.crowd, 'crowd_variance': self.crowd_variance, 'rows': self.rows}
 
     @classmethod
     def from_dict(cls, data):
@@ -35,6 +36,7 @@ class Learner:
         obj.weights = data['weights']
         obj.counts = data['counts']
         obj.crowd = data['crowd']
+        obj.crowd_variance = data.get('crowd_variance', {s: {} for s in SPOTS})
         obj.rows = data.get('rows', 0)
         return obj
 
@@ -99,11 +101,28 @@ class Learner:
                     # Shrink toward 1 when data are sparse. Event/weather effects in the
                     # supplied expected counts are never multiplied in a second time.
                     self.crowd[spot][key] = [.9 * old[0] + .1 * ratio, old[1] + 1]
+                    # Online variance of weather-normalized forecast errors, including
+                    # zero-customer days. Older checkpoints start with the prior.
+                    count, mean, m2 = self.crowd_variance[spot].get(key, [0, 0., 0.])
+                    observation = clamp(customers / max(conditional, 1.), 0., 3.)
+                    count += 1
+                    delta = observation - mean
+                    mean += delta / count
+                    m2 += delta * (observation - mean)
+                    self.crowd_variance[spot][key] = [count, mean, m2]
         self.rows += 1
 
     def crowd_multiplier(self, spot, weather):
         mean, count = self.crowd[spot].get(weather, [1., 0])
         return 1. + (mean - 1.) * count / (count + 12.)
+
+    def crowd_noise(self, spot, weather):
+        """Relative standard deviation; shrink sparse observations toward old +/-15% noise."""
+        count, mean, m2 = self.crowd_variance[spot].get(weather, [0, 0., 0.])
+        prior_variance = .15**2 / 3.
+        relative_m2 = m2 / max(.25, mean)**2 if count else 0.
+        variance = (relative_m2 + 12 * prior_variance) / (max(0, count-1) + 12)
+        return clamp(math.sqrt(variance), .04, .40)
 
 
 def training_rows(path):

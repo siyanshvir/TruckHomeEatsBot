@@ -1,5 +1,6 @@
 """Published game contracts and an expected customer-flow model. No network or learning."""
 import math
+from functools import lru_cache
 from dataclasses import dataclass
 
 SPOTS = ('highst', 'oval', 'union', 'northres', 'thompson', 'stadium')
@@ -116,13 +117,10 @@ def reputation_value(quality, reputation, values=VALUES):
     return values[quality] * (.7 + .006 * clamp(reputation, 0, 100))
 
 
-def expected_sales(trucks, customers, model, values=VALUES):
-    """Fluid approximation of sequential choice with finite stock and overflow.
-
-    trucks: (price, quality, local reputation, inventory). Exact ties go to earlier
-    trucks, so put our candidate last for a conservative tie assumption.
-    Budget is modeled as normal and independent of minimum quality; both are learned.
-    """
+@lru_cache(maxsize=4096)
+def _customer_segments(trucks, model, value_items):
+    """Cache crowd-independent preferences; retain the existing sequential flow model."""
+    values = dict(value_items)
     mu, sd, mix = model
     scores = [reputation_value(q, r, values) - p for p, q, r, _ in trucks]
     segments = []
@@ -137,7 +135,15 @@ def expected_sales(trucks, customers, model, values=VALUES):
             preference = sorted((i for i in eligible if trucks[i][0] <= price),
                                 key=lambda i: (-scores[i], trucks[i][0], i))
             if high - low > 1e-10:
-                segments.append((mass * (high - low) * customers, preference))
+                segments.append((mass * (high - low), tuple(preference)))
+    return tuple(segments)
+
+
+def expected_sales(trucks, customers, model, values=VALUES):
+    """Sequential choice with finite stock; exact ties favor earlier trucks."""
+    mu, sd, mix = model
+    segments = _customer_segments(tuple(tuple(t) for t in trucks),
+                                  (mu, sd, tuple(mix)), tuple(sorted(values.items())))
     remaining = [float(t[3]) for t in trucks]
     sold = [0.] * len(trucks)
     duration = 1.
@@ -146,7 +152,7 @@ def expected_sales(trucks, customers, model, values=VALUES):
         for mass, preference in segments:
             for i in preference:
                 if remaining[i] > 1e-8:
-                    rates[i] += mass
+                    rates[i] += mass * customers
                     break
         dt = min([duration] + [remaining[i] / rate for i, rate in enumerate(rates)
                                 if rate > 0 and remaining[i] > 1e-8])

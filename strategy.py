@@ -30,15 +30,18 @@ class Brain:
         self.last_order = None
         self.diagnostics = {}
         self.opponents = OpponentModel()
+        self.prediction_checks = []
 
     def dump(self):
         return {'learner': self.learner.to_dict(), 'market': self.market, 'seen': self.seen,
                 'history': self.history, 'reputations': self.reputations,
-                'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data}
+                'pending': self.pending, 'last_order': self.last_order, 'opponents': self.opponents.data,
+                'prediction_checks': self.prediction_checks}
 
     def restore(self, data):
         self.learner = Learner.from_dict(data['learner'])
         self.opponents = OpponentModel(data.get('opponents'))
+        self.prediction_checks = data.get('prediction_checks', [])
         for key in ('market', 'seen', 'history', 'reputations', 'pending', 'last_order'):
             setattr(self, key, data[key])
 
@@ -65,6 +68,23 @@ class Brain:
             own_reps[s] = before.get(me, {}).get(s, clamp(own_reps[s] - REP_CHANGE[own['quality']], 0, 100))
         before[me] = own_reps
         forecast = self.pending['forecast'] if self.pending and self.pending['day'] == last['day'] else None
+        prediction = (self.pending or {}).get('prediction') if forecast else None
+        if prediction:
+            order = prediction['order']
+            actual = spot_results(last).get(order['spot'], {})
+            matched = all(own.get(k) == v for k, v in order.items())
+            sold = float(own.get('sold', 0))
+            check = {'mode': key[0], 'market': key[1], 'day': last['day'],
+                     'order': order, 'order_matches': matched,
+                     'expected_sales': prediction['sales'], 'actual_sales': sold,
+                     'expected_profit': prediction['profit'], 'actual_profit': own.get('profit'),
+                     'expected_rivals': prediction['rivals'],
+                     'actual_rivals': sum(identity(t) != me for t in actual.get('trucks', [])),
+                     'sellout': matched and order['meals'] > 0 and sold >= order['meals']}
+            # A sold-out truck reveals only a lower bound on uncapped demand.
+            check['demand_error'] = (max(0., sold-prediction['demand']) if check['sellout']
+                                     else abs(sold-prediction['demand'])) if matched else None
+            self.prediction_checks = (self.prediction_checks + [check])[-48:]
         self.learner.learn(last, before, forecast, rules, strength=.7)
         observed_context = context(forecast or {'events': last.get('events') or []})
         visited = {}
@@ -171,7 +191,8 @@ class Brain:
                 average = sum(p * weather_factor(w, spot) for w, p in odds.items())
                 conditional = weather_factor(weather, spot) / max(average, .1)
                 correction = self.learner.crowd_multiplier(spot, weather)
-                crowds[spot] = counts[spot] * conditional * correction * rng.uniform(.85, 1.15)
+                width = math.sqrt(3.) * self.learner.crowd_noise(spot, weather)
+                crowds[spot] = counts[spot] * conditional * correction * rng.uniform(1-width, 1+width)
                 models[spot] = customer_model(spot, kinds, self.learner.sample(spot, rng))
             scenarios.append((placements, crowds, models, active))
         return scenarios
@@ -307,7 +328,10 @@ class Brain:
         restriction = self.location_restriction(results, counts, rules.spots)
         best = restriction['best']
         order = rules.validate(best['order'])
-        self.pending = {'day': state.get('order_for_day'), 'forecast': state.get('forecast') or {}}
+        self.pending = {'day': state.get('order_for_day'), 'forecast': state.get('forecast') or {},
+                        'prediction': {'order': dict(order), 'sales': best['sales'],
+                                       'demand': best['demand'], 'profit': best['profit'],
+                                       'rivals': sum(len(p[order['spot']]) for p, _, _, _ in scenarios)/len(scenarios)}}
         self.last_order = order
         ranked = []
         for spot in rules.spots:
@@ -318,6 +342,7 @@ class Brain:
         self.diagnostics = {'elapsed': time.perf_counter()-started, 'coverage': coverage,
                             'candidates': len(results), 'ranking': sorted(ranked, key=lambda r: -r['score']),
                             'chosen': best, 'location_rule': {k: v for k, v in restriction.items() if k != 'best'},
+                            'scenario_count': len(scenarios), 'prediction_checks': self.prediction_checks,
                             'rivals': {identity(t): self.opponents.summary(identity(t),
                                 self.history.get(identity(t), []), state.get('forecast') or {},
                                 self.history, rules.spots) for t in state.get('trucks') or []

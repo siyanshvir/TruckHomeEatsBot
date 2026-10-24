@@ -60,7 +60,7 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def make_brain(model=None, samples=12, small_crowds=True):
+def make_brain(model=None, samples=32, small_crowds=True):
     path = Path(model) if model else ROOT / 'model' / 'prior.json'
     learner = Learner.load(path) if path.exists() else Learner()
     # Inventory still pays full ingredient/waste costs in expected profit; ease
@@ -114,6 +114,17 @@ class Runner:
             except (OSError, ValueError, TypeError):
                 print('Live observation archive failed', flush=True)
 
+    def health(self, state):
+        if self.checkpoint:
+            try:
+                atomic_json(Path(self.checkpoint).parent / 'connection-status.json',
+                            {'received_at': time.time(), 'mode': state.get('mode'),
+                             'market': state.get('market'), 'day': state.get('day'),
+                             'phase': state.get('phase'), 'order_for_day': state.get('order_for_day'),
+                             'accepted': self.accepted, 'learned_day': getattr(self.brain, 'seen', None)})
+            except OSError:
+                pass
+
     def record(self, state, order):
         self.archive(state)
         if self.log:
@@ -163,6 +174,7 @@ class Runner:
                         self.brain.observe(state)
                         self.archive(state)
                         self.save()
+                    self.health(state)
                     continue
                 if key != self.pending_key:
                     try:
@@ -178,6 +190,7 @@ class Runner:
                     self.accepted = key
                     self.record(state, order)
                     self.save()
+                    self.health(state)
                     if isinstance(response.get('state'), dict):
                         next_state = response['state']
                 elif status == 409:
@@ -211,7 +224,7 @@ def main():
     parser.add_argument('--seed', default='rebuild-check')
     parser.add_argument('--days', type=int, default=30)
     parser.add_argument('--rivals', type=int, default=3)
-    parser.add_argument('--samples', type=int, default=12)
+    parser.add_argument('--samples', type=int, default=32)
     parser.add_argument('--model', type=Path)
     parser.add_argument('--fresh', action='store_true', help='Ignore live checkpoint')
     args = parser.parse_args()

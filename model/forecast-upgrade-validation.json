@@ -1,0 +1,191 @@
+{
+  "source": "approximate-offline",
+  "markets": 6,
+  "days_per_market": 30,
+  "baseline_commit": "bee0163",
+  "before": [
+    {
+      "policy": "learned",
+      "seed": "forecast-upgrade",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 7618.49,
+      "waste": 121,
+      "zero_sale_days": 0,
+      "worst_day": -393.75,
+      "decision_max_seconds": 0.11099508299957961,
+      "decision_mean_seconds": 0.09537195417021091
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-upgrade",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 9706.419999999998,
+      "waste": 153,
+      "zero_sale_days": 0,
+      "worst_day": -338.0,
+      "decision_max_seconds": 0.10725254204589874,
+      "decision_mean_seconds": 0.09081275837185482
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-b",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 4320.650000000001,
+      "waste": 658,
+      "zero_sale_days": 1,
+      "worst_day": -495.0,
+      "decision_max_seconds": 0.12960562494117767,
+      "decision_mean_seconds": 0.09694159580394626
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-b",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 7808.72,
+      "waste": 368,
+      "zero_sale_days": 1,
+      "worst_day": -498.75,
+      "decision_max_seconds": 0.11964020796585828,
+      "decision_mean_seconds": 0.09484108196338639
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-c",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 4347.800000000001,
+      "waste": 583,
+      "zero_sale_days": 0,
+      "worst_day": -418.83,
+      "decision_max_seconds": 0.1262459580320865,
+      "decision_mean_seconds": 0.10234015700795378
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-c",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 7292.099999999999,
+      "waste": 289,
+      "zero_sale_days": 0,
+      "worst_day": -228.75,
+      "decision_max_seconds": 0.12195229204371572,
+      "decision_mean_seconds": 0.09647711385817577
+    }
+  ],
+  "after": [
+    {
+      "policy": "learned",
+      "seed": "forecast-upgrade",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 4500.62,
+      "waste": 530,
+      "zero_sale_days": 0,
+      "worst_day": -434.75,
+      "decision_max_seconds": 0.22334554104600102,
+      "decision_mean_seconds": 0.1855337097736386
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-upgrade",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 9668.4,
+      "waste": 72,
+      "zero_sale_days": 0,
+      "worst_day": -159.25,
+      "decision_max_seconds": 0.21932066697627306,
+      "decision_mean_seconds": 0.18142342490221683
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-b",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 6874.4,
+      "waste": 207,
+      "zero_sale_days": 0,
+      "worst_day": -155.75,
+      "decision_max_seconds": 0.24978016701061279,
+      "decision_mean_seconds": 0.18742404176931207
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-b",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 9740.48,
+      "waste": 49,
+      "zero_sale_days": 0,
+      "worst_day": 141.25,
+      "decision_max_seconds": 0.25498295889701694,
+      "decision_mean_seconds": 0.19041194866488997
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-c",
+      "rivals": 12,
+      "style": "brutal",
+      "profit": 5687.47,
+      "waste": 419,
+      "zero_sale_days": 0,
+      "worst_day": -323.75,
+      "decision_max_seconds": 0.24720887502189726,
+      "decision_mean_seconds": 0.19558287493030851
+    },
+    {
+      "policy": "learned",
+      "seed": "forecast-c",
+      "rivals": 12,
+      "style": "moving",
+      "profit": 9344.890000000001,
+      "waste": 104,
+      "zero_sale_days": 0,
+      "worst_day": 96.25,
+      "decision_max_seconds": 0.21629899996332824,
+      "decision_mean_seconds": 0.17591237359447404
+    }
+  ],
+  "summary": {
+    "before": {
+      "mean_profit": 6849.03,
+      "waste": 2172,
+      "zero_sale_days": 2,
+      "max_decision_seconds": 0.12960562494117767
+    },
+    "after": {
+      "mean_profit": 7636.043333333333,
+      "waste": 1381,
+      "zero_sale_days": 0,
+      "max_decision_seconds": 0.25498295889701694
+    }
+  },
+  "limitations": [
+    "Three seeds across two synthetic rival styles; not proof of live improvement.",
+    "Update loses on two of six matched markets.",
+    "New crowd variance starts from prior on older checkpoints and learns future pairs."
+  ],
+  "official_practice": {
+    "source": "server-practice",
+    "days": 10,
+    "results": [
+      {
+        "policy": "learned",
+        "seed": "forecast-upgrade-official",
+        "rivals": 7,
+        "style": "house",
+        "profit": 2312.75,
+        "waste": 21,
+        "zero_sale_days": 0,
+        "worst_day": 126,
+        "decision_max_seconds": 0.1901038340292871,
+        "decision_mean_seconds": 0.13202760819112883
+      }
+    ]
+  }
+}

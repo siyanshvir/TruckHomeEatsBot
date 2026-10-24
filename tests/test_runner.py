@@ -1,4 +1,5 @@
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,22 @@ class StubBrain:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_idle_state_records_health_without_submitting(self):
+        class Client:
+            def __init__(self): self.calls = 0
+            def call(self, method, path, body=None, **kwargs):
+                self.calls += 1
+                if self.calls > 1: raise Stop()
+                assert method == 'GET'
+                st = state('live'); st['phase'] = 'day'; st['orders_open'] = False
+                return 200, st
+        with tempfile.TemporaryDirectory() as folder:
+            runner = Runner(Client(), StubBrain(), Path(folder)/'runtime-v1.json')
+            with self.assertRaises(Stop): runner.play()
+            health = json.loads((Path(folder)/'connection-status.json').read_text())
+            self.assertEqual(health['phase'], 'day')
+            self.assertIsNone(health['accepted'])
+
     def test_timeout_retries_cached_order_with_immediate_state_poll(self):
         class Client:
             def __init__(self): self.gets = []; self.posts = []

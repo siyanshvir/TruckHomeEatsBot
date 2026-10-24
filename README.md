@@ -63,6 +63,26 @@ they do not have to undercut every rival: overflow and reputation can still matt
 weather/events. Weather scenarios are normalized around those counts, and online
 calibration learns remaining forecast errors. Explicit zero forecasts stay zero.
 
+Crowd variability is learned separately for each location and actual weather,
+with sparse data shrunk toward the original +/-15% noise prior. Old checkpoints
+load without retraining or discarding existing history; the new variance
+statistics accumulate from newly observed forecast/result pairs. Production
+evaluates 32 joint scenarios by default. Cached customer preference calculations
+reuse work across crowd levels while retaining finite stock and overflow rules.
+Quantity is still optimized, with no automatic stock increase after a sellout.
+
+Plans now persist expected sales, uncapped demand, profit, and rival counts.
+Completed results are matched to those plans once, including across restarts.
+Changed orders are flagged rather than scored as model errors, and sellouts
+remain lower bounds on demand. Inspect recent checks and API freshness from a
+second terminal with `python3 status.py`. This command reads local files only;
+a stale capture is not proof that the bot is still connected.
+
+These additions were informed by the forecast calibration, reporting, and
+computation-reuse ideas in [Peezy0/nightshift-food-truck](https://github.com/Peezy0/nightshift-food-truck/tree/4fe768cd99f4d85bca1ae0cbbfb420f53276397e).
+They are implemented within our existing learner and customer-flow model; the
+smallest-three rule, price bounds, and Price Wars rival models are retained.
+
 ## Learning and persistence
 
 `model/prior.json` is trained from saved practice collection pairs. The initial
