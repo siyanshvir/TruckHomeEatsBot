@@ -15,6 +15,7 @@ from opponents import OpponentModel, context
 from forecast_log import capture
 from mechanics import features, demand_levels
 from overheads import Overheads
+from riots import riot_cost
 from staffing import CrewModel
 
 # Documented surprise rates; building spots can have a fire drill (open ones today).
@@ -96,6 +97,15 @@ class Brain:
                 phantom['exposures'] += 1
                 phantom['events'] += min(1., max(0., check['actual_rivals'] - check['expected_rivals']))
         return phantom
+
+    def game_day_rate(self):
+        """Share of observed days with a game, shrunk toward 25%: how often game-day laws would bite."""
+        days = {}
+        for records in self.history.values():
+            for record in records:
+                days[record.get('day')] = days.get(record.get('day'), False) or (
+                    'game' in ((record.get('context') or {}).get('events') or []))
+        return (sum(days.values()) + 1.) / (len(days) + 4.)
 
     def phantom_rate(self):
         low, high = PHANTOM_LIMITS
@@ -331,6 +341,9 @@ class Brain:
         if overheads.capacity is not None:
             cap = min(cap, overheads.capacity)  # each employee serves 50 meals a day
         charged = overheads.charged(price)
+        # Expected riot damage near tomorrow's game (score only). The final policy prices it through
+        # its rule adapter instead, so it is not counted twice.
+        riots = 0. if self.final_active else riot_cost(state, spot)
         distributions = [demand_levels(state, rules, spot, quality, charged, scenario) for scenario in scenarios]
         factor, adjust = 1., 0.
         if self.final_active:
@@ -359,7 +372,7 @@ class Brain:
             future = .006 * rules.values[quality] * rep_delta * mean * min(remaining, 6) * .15 * sale_probability
             future = clamp(future, -25., 25.)
             exploration = 3. * min(1., remaining / 15.) * (1-self.learner.confidence(spot)) * sale_probability
-            score = profit - self.risk * loss + future + exploration - adjust
+            score = profit - self.risk * loss + future + exploration - adjust - riots
             if meals and self.quiet_bonus:
                 score += self.quiet_bonus * quiet
             candidate = {'score': score, 'profit': profit, 'sales': mean, 'loss': loss,
