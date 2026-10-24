@@ -556,6 +556,7 @@ class Brain:
         expected = self.forecast_customers(state, kinds)
         self.pending_forecast = (day, dict(expected), dict(probs))
         my_reps = (state.get("you") or {}).get("reputation") or {}
+        self._my_reps = my_reps
         samples = self.rival_predictions(state, expected, day)
         watch = self.rival_watch(samples)
 
@@ -637,11 +638,19 @@ class Brain:
         return watch
 
     def price_ceiling(self, watch, spot, qi):
-        """Highest price allowed at this spot and quality: just under every equal-or-better rival."""
-        rivals = [rp for (_, rp, rq) in watch.get(spot, []) if rq >= qi]
-        if not rivals:
+        """Highest price at this spot and quality that still beats every equal-or-better rival on
+        customer VALUE (quality x reputation - price), not just on price: a rival with higher
+        reputation here wins even when it charges a bit more."""
+        my_rf = rep_factor(_num((getattr(self, "_my_reps", None) or {}).get(spot, 50), 50))
+        caps = []
+        for name, rp, rq in watch.get(spot, []):
+            if rq < qi:
+                continue
+            their_value = VALUE[rq] * rep_factor(self.reps.get(name, {}).get(spot, 50.0)) - rp
+            caps.append(VALUE[qi] * my_rf - their_value - self.p["undercut"])
+        if not caps:
             return None
-        return round(min(rivals) - self.p["undercut"], 2)
+        return round(min(caps), 2)
 
     def _rival_note(self, watch, spot):
         rivals = watch.get(spot, [])

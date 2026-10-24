@@ -60,6 +60,14 @@ class ContrarianBrain(Brain):
             qi = QUALITIES.index(base[1]["quality"])
             price = base[1]["price"] * (1 + p["upcharge_pct"]) + p["upcharge"]
             price = round(min(price, 30.0, VALUE[qi] * rf - 0.01), 2)
+            # never price above a rival of equal or better quality here (day 7: standard $11.99
+            # next to premium $9.53 sold 0 of 47)
+            self._my_reps = my_reps
+            ceil = self.price_ceiling(self.rival_watch(samples), spot, qi)
+            if ceil is not None:
+                if ceil <= COST[qi] + p["min_margin"]:
+                    return Brain.decide(self, state)
+                price = round(min(price, ceil), 2)
             dist = self._demand(qi, price, rf, mu, sd, qmix, scen, groups)
             meals = min(int(BUDGET // COST[qi]), int(self._quantile(dist, p["sellout"])))
             sold = sum(pr * min(meals, d) for pr, d in dist)

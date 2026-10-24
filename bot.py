@@ -81,7 +81,7 @@ def decide(state):
         quality = order["quality"]
         cost = float((rules.get("costs") or {}).get(quality, COST[QUALITIES.index(quality)]))
         budget = float(rules.get("budget", BUDGET))
-        order["meals"] = max(1, min(int(order["meals"]), int(budget // cost)))
+        order["meals"] = max(0, min(int(order["meals"]), int(budget // cost)))
         order["price"] = round(max(float(rules.get("price_min", 1)), min(float(rules.get("price_max", 30)),
                                                                        float(order["price"]))), 2)
         return order
@@ -100,9 +100,13 @@ def call(method, path, body=None, timeout=35):
             return r.status, json.load(r)
     except urllib.error.HTTPError as e:
         try:
-            return e.code, json.load(e)
+            body = json.load(e)
+            if not isinstance(body, dict):
+                body = {"error": str(body)[:200]}
         except Exception:
-            return e.code, {"error": str(e)}
+            body = {"error": "http %d" % e.code}
+        body["retry_after"] = e.headers.get("Retry-After") if e.headers else None
+        return e.code, body
 
 
 def play(base):
@@ -118,12 +122,12 @@ def play(base):
             continue
         backoff = 1
         if status == 429:
-            time.sleep(2)
+            time.sleep(retry_after(state, 2))
             continue
         if status != 200:
-            print("error %d: %s" % (status, state.get("error")))
-            if status in (401, 404):
-                sys.exit(1)
+            print("error %d: %s" % (status, state.get("error") if isinstance(state, dict) else ""))
+            if status == 401 or (status == 404 and base != "/api/v1"):
+                sys.exit(1)             # bad key, or practice market expired; live/final keep going
             time.sleep(3)
             continue
         if not isinstance(state, dict) or "version" not in state:
@@ -134,12 +138,15 @@ def play(base):
             report(state)
             return state
         key = (state.get("mode"), state.get("market"), state.get("order_for_day"))
-        if state.get("phase") == "night" and state.get("orders_open") and key != ordered_for:
+        if state.get("phase") == "night" and state.get("orders_open", True) and key != ordered_for:
             try:
                 report(state)
             except Exception:
                 pass
-            log_state(state)
+            try:
+                log_state(state)
+            except Exception:
+                pass
             order = decide(state)
             if getattr(BRAIN, "rival_note", "") and not USE_STARTER:
                 print("  " + BRAIN.rival_note)
@@ -150,25 +157,38 @@ def play(base):
                 ordered_for = key
                 print("  sitting out day %s" % state.get("order_for_day"))
                 continue
-            try:
-                status, res = call("POST", base + "/orders", order, timeout=10)
-            except (urllib.error.URLError, OSError, ValueError) as e:
-                print("  network error sending the order (%s), retrying" % e)
+            sent = False
+            for attempt in range(3):         # retry right away: the final waits only 2s per day
+                try:
+                    status, res = call("POST", base + "/orders", order, timeout=5)
+                except (urllib.error.URLError, OSError, ValueError) as e:
+                    print("  network error sending the order (%s), retrying" % type(e).__name__)
+                    time.sleep(0.2)
+                    continue
+                if status == 200 and isinstance(res, dict):
+                    ordered_for, sent = key, True
+                    print("  ordered for day %s: %s" % (res.get("for_day"), order))
+                    if "state" in res:          # practice plays the day right away
+                        version = 0
+                    break
+                if status == 429:
+                    time.sleep(min(1.0, retry_after(res, 0.5)))
+                    continue
+                print("  order rejected (%d): %s" % (status, res.get("error") if isinstance(res, dict) else ""))
+                if status == 400:
+                    order = safe_default(state)     # bad order: send the safe one instead
+                    continue
+                break                               # 409 etc: don't mark done, wait for the next state
+            if not sent:
+                version = 0                         # re-check the state right away
                 time.sleep(0.3)
-                continue
-            if status == 200 and isinstance(res, dict):
-                ordered_for = key
-                print("  ordered for day %s: %s" % (res.get("for_day"), order))
-                if "state" in res:          # practice plays the day right away
-                    version = 0
-            elif status == 409:            # orders closed or wrong phase: wait for the next state
-                ordered_for = key
-                print("  order not accepted (409): %s" % res.get("error"))
-            elif status == 429:
-                time.sleep(1)
-            else:
-                print("  order rejected (%d): %s" % (status, res.get("error")))
-                time.sleep(1)
+
+
+def retry_after(res, default):
+    try:
+        return max(0.2, min(30.0, float((res or {}).get("retry_after") or default)))
+    except (TypeError, ValueError, AttributeError):
+        return default
 
 
 def log_state(state):
@@ -180,12 +200,20 @@ def log_state(state):
         with open("data/live.jsonl", "a") as f:
             f.write(json.dumps({"mode": state.get("mode"), "market": state.get("market"),
                                 "last_day": state["last_day"],
-                                "trucks": [{"id": t["id"], "rep": t.get("reputation")} for t in state["trucks"]]}) + "\n")
-    except OSError:
+                                "trucks": [{"id": t.get("id"), "rep": t.get("reputation")}
+                                           for t in state.get("trucks") or [] if isinstance(t, dict)]}) + "\n")
+    except Exception:
         pass
 
 
 def report(state):
+    try:
+        _report(state)
+    except Exception:
+        pass
+
+
+def _report(state):
     last = state.get("last_day") or {}
     mine = last.get("you") or {}
     where = state["mode"] + (" market %s" % state["market"] if state["mode"] == "final" else "")
@@ -232,7 +260,14 @@ def main():
             print("  %-24s $%10.2f" % (t["truck_name"], t["cash"]))
     else:
         print("playing the live game at %s (Ctrl+C to stop)" % URL)
-        play("/api/v1")
+        while True:                          # never die on a recoverable error
+            try:
+                play("/api/v1")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                print("loop crashed (%r), restarting in 2s" % (e,))
+                time.sleep(2)
 
 
 if __name__ == "__main__":
